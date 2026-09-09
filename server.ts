@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import pg from 'pg';
+import { AsyncLocalStorage } from 'async_hooks';
 
 const { Pool } = pg;
 
@@ -21,7 +22,18 @@ async function initPostgres() {
       );
     `);
 
-    console.log('[PostgreSQL] Banco conectado e tabela avaliacao_dados pronta.');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS avaliacao_empresas (
+        empresa_id TEXT PRIMARY KEY,
+        nome TEXT NOT NULL,
+        slug TEXT UNIQUE NOT NULL,
+        ativo BOOLEAN NOT NULL DEFAULT TRUE,
+        dados JSONB NOT NULL,
+        criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    console.log('[PostgreSQL] Banco conectado; tabelas mono e multiempresa prontas.');
   } catch (error) {
     console.error('[PostgreSQL] Erro ao inicializar banco:', error);
   }
@@ -222,23 +234,16 @@ function loadDb(): RestaurantDb {
   };
 }
 async function saveDbToPostgres(db: RestaurantDb): Promise<void> {
+  const empresaId = currentCompanyId();
   try {
     await pool.query(
-      `
-      INSERT INTO avaliacao_dados (id, dados, atualizado_em)
-      VALUES (1, $1::jsonb, NOW())
-      ON CONFLICT (id)
-      DO UPDATE SET
-        dados = EXCLUDED.dados,
-        atualizado_em = NOW()
-      `,
-      [JSON.stringify(db)]
+      `INSERT INTO avaliacao_empresas (empresa_id, nome, slug, dados, atualizado_em)
+       VALUES ($1, $2, $1, $3::jsonb, NOW())
+       ON CONFLICT (empresa_id) DO UPDATE SET dados=EXCLUDED.dados, nome=EXCLUDED.nome, atualizado_em=NOW()`,
+      [empresaId, db.settings?.name || empresaId, JSON.stringify(db)]
     );
-
-    console.log('[PostgreSQL] Dados salvos com sucesso.');
-  } catch (error) {
-    console.error('[PostgreSQL] Erro ao salvar dados:', error);
-  }
+    console.log(`[PostgreSQL] Dados da empresa ${empresaId} salvos.`);
+  } catch (error) { console.error('[PostgreSQL] Erro ao salvar dados multiempresa:', error); }
 }
 function saveDb(db: RestaurantDb): void {
   try {
@@ -257,49 +262,45 @@ function saveDb(db: RestaurantDb): void {
   }
 }
 
-// In-memory active database
-let activeDb = loadDb();
+// Multiempresa: cada requisição trabalha em um banco isolado pelo X-Company-Id.
+const tenantContext = new AsyncLocalStorage<{ companyId: string }>();
+const tenantDbs = new Map<string, RestaurantDb>();
+const legacySeed = loadDb();
+tenantDbs.set('demo', legacySeed);
 
-// O PostgreSQL será inicializado abaixo.
-// Não salvar automaticamente aqui para evitar sobrescrever
-// dados existentes no banco durante um novo deploy.
+function normalizeCompanyId(value: unknown): string {
+  const clean = String(value || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  return clean || 'demo';
+}
+function currentCompanyId(): string { return tenantContext.getStore()?.companyId || 'demo'; }
+function freshDb(): RestaurantDb {
+  return { settings: { ...DEFAULT_SETTINGS, name: 'Nova Empresa' }, rewards: JSON.parse(JSON.stringify(DEFAULT_REWARDS)), waiters: [], reviews: [] };
+}
+async function loadCompanyDb(companyId: string): Promise<RestaurantDb> {
+  if (tenantDbs.has(companyId)) return tenantDbs.get(companyId)!;
+  try {
+    const result = await pool.query('SELECT dados FROM avaliacao_empresas WHERE empresa_id=$1 AND ativo=TRUE LIMIT 1', [companyId]);
+    if (result.rows[0]?.dados) {
+      const parsed = result.rows[0].dados;
+      const db: RestaurantDb = { settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, rewards: Array.isArray(parsed.rewards) ? parsed.rewards : [], waiters: Array.isArray(parsed.waiters) ? parsed.waiters : [], reviews: Array.isArray(parsed.reviews) ? parsed.reviews : [] };
+      tenantDbs.set(companyId, db); return db;
+    }
+  } catch (e) { console.warn('[Multiempresa] Falha ao carregar empresa:', e); }
+  const db = freshDb(); tenantDbs.set(companyId, db); return db;
+}
+const activeDb = new Proxy({} as RestaurantDb, {
+  get(_target, prop) { return (tenantDbs.get(currentCompanyId()) || legacySeed as any)[prop as keyof RestaurantDb]; },
+  set(_target, prop, value) { const id=currentCompanyId(); const db=tenantDbs.get(id) || freshDb(); (db as any)[prop]=value; tenantDbs.set(id, db); return true; }
+});
+
 async function loadDbFromPostgres(): Promise<boolean> {
   try {
-    const result = await pool.query(
-      'SELECT dados FROM avaliacao_dados WHERE id = 1 LIMIT 1'
-    );
-
-    if (result.rows.length === 0 || !result.rows[0].dados) {
-      console.log('[PostgreSQL] Ainda não existem dados salvos.');
-      return false;
-    }
-
-    const parsed = result.rows[0].dados;
-
-    activeDb = {
-      settings: parsed.settings
-        ? { ...DEFAULT_SETTINGS, ...parsed.settings }
-        : DEFAULT_SETTINGS,
-      rewards:
-        Array.isArray(parsed.rewards) && parsed.rewards.length > 0
-          ? parsed.rewards
-          : DEFAULT_REWARDS,
-      waiters:
-        Array.isArray(parsed.waiters) && parsed.waiters.length > 0
-          ? parsed.waiters
-          : DEFAULT_WAITERS,
-      reviews: Array.isArray(parsed.reviews) ? parsed.reviews : [],
-    };
-
-    console.log(
-      `[PostgreSQL] Dados carregados: ${activeDb.rewards.length} brindes, ${activeDb.waiters.length} garçons e ${activeDb.reviews.length} avaliações.`
-    );
-
+    const result = await pool.query('SELECT dados FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1', ['demo']);
+    if (!result.rows[0]?.dados) return false;
+    const parsed=result.rows[0].dados;
+    tenantDbs.set('demo', { settings:{...DEFAULT_SETTINGS,...(parsed.settings||{})}, rewards:Array.isArray(parsed.rewards)?parsed.rewards:DEFAULT_REWARDS, waiters:Array.isArray(parsed.waiters)?parsed.waiters:DEFAULT_WAITERS, reviews:Array.isArray(parsed.reviews)?parsed.reviews:[] });
     return true;
-  } catch (error) {
-    console.error('[PostgreSQL] Erro ao carregar dados:', error);
-    return false;
-  }
+  } catch (e) { console.error('[PostgreSQL] Erro ao carregar demo:', e); return false; }
 }
 interface WhatsAppDispatch {
   id: string;
@@ -321,7 +322,7 @@ const MAX_WEBHOOK_CACHE = 500;
 
 async function syncFirestoreToActiveDb(): Promise<void> {
   try {
-    const snap = await getDocs(collection(firestoreDb, 'reviews'));
+    const snap = await getDocs(collection(firestoreDb, 'companies', currentCompanyId(), 'reviews'));
     if (snap && snap.size > 0) {
       const fsReviews: any[] = [];
       snap.forEach((d) => {
@@ -358,9 +359,41 @@ if (!carregouPostgres) {
 
 
   const app = express();
+  app.use(async (req, _res, next) => {
+    const companyId = normalizeCompanyId(req.header('X-Company-Id') || req.query.empresa || 'demo');
+    await loadCompanyDb(companyId);
+    tenantContext.run({ companyId }, next);
+  });
   const PORT = process.env.NODE_ENV === 'production' ? 3000 : 3001;
 
   app.use(express.json());
+
+  // Administração geral multiempresa. Proteja com SUPER_ADMIN_KEY no Render.
+  function requireSuperAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+    const configured = String(process.env.SUPER_ADMIN_KEY || '').trim();
+    const supplied = String(req.header('X-Super-Admin-Key') || '').trim();
+    if (!configured || supplied !== configured) return res.status(401).json({ error: 'Acesso de administrador geral negado.' });
+    next();
+  }
+  app.get('/api/admin/companies', requireSuperAdmin, async (_req, res) => {
+    const result = await pool.query('SELECT empresa_id, nome, slug, ativo, criado_em, atualizado_em FROM avaliacao_empresas ORDER BY criado_em DESC');
+    res.json({ companies: result.rows });
+  });
+  app.post('/api/admin/companies', requireSuperAdmin, async (req, res) => {
+    const empresaId = normalizeCompanyId(req.body?.slug || req.body?.empresaId || req.body?.name);
+    const nome = String(req.body?.name || '').trim();
+    if (!nome || empresaId === 'demo') return res.status(400).json({ error: 'Informe nome e slug válidos.' });
+    const db = freshDb(); db.settings.name = nome;
+    await pool.query(`INSERT INTO avaliacao_empresas (empresa_id,nome,slug,ativo,dados) VALUES ($1,$2,$1,TRUE,$3::jsonb)
+      ON CONFLICT (empresa_id) DO NOTHING`, [empresaId, nome, JSON.stringify(db)]);
+    tenantDbs.set(empresaId, db);
+    res.status(201).json({ success:true, company:{ empresaId, nome, slug:empresaId }, evaluationUrl:`/?empresa=${empresaId}&cliente=1` });
+  });
+  app.patch('/api/admin/companies/:id/status', requireSuperAdmin, async (req, res) => {
+    const id=normalizeCompanyId(req.params.id); const ativo=Boolean(req.body?.ativo);
+    await pool.query('UPDATE avaliacao_empresas SET ativo=$2, atualizado_em=NOW() WHERE empresa_id=$1',[id,ativo]);
+    res.json({success:true, empresaId:id, ativo});
+  });
 
   // API Routes FIRST
   app.get('/api/health', (_req, res) => {
@@ -411,7 +444,7 @@ if (!carregouPostgres) {
       // Persist to Firestore
       try {
         const cleaned = sanitizeObj(review);
-        await setDoc(doc(firestoreDb, 'reviews', review.id), cleaned, { merge: true });
+        await setDoc(doc(firestoreDb, 'companies', currentCompanyId(), 'reviews', review.id), cleaned, { merge: true });
       } catch (fErr) {
         console.warn('[Firestore Sync] Aviso ao salvar review no Firestore:', fErr);
       }
@@ -464,7 +497,7 @@ if (!carregouPostgres) {
       // Persist to Firestore
       try {
         await setDoc(
-          doc(firestoreDb, 'reviews', review.id),
+          doc(firestoreDb, 'companies', currentCompanyId(), 'reviews', review.id),
           {
             rewardClaimed: true,
             claimedAt: review.claimedAt,
@@ -501,7 +534,7 @@ if (!carregouPostgres) {
 
       // Delete from Firestore directly
       try {
-        await deleteDoc(doc(firestoreDb, 'reviews', id));
+        await deleteDoc(doc(firestoreDb, 'companies', currentCompanyId(), 'reviews', id));
         console.log(`[Firestore Sync] Avaliação ${id} excluída do Firestore.`);
       } catch (fErr) {
         console.warn(`[Firestore Sync] Aviso ao excluir review ${id} do Firestore:`, fErr);
@@ -528,7 +561,7 @@ if (!carregouPostgres) {
 
       // Also delete from Firestore
       try {
-        const snap = await getDocs(collection(firestoreDb, 'reviews'));
+        const snap = await getDocs(collection(firestoreDb, 'companies', currentCompanyId(), 'reviews'));
         const deletePromises: Promise<any>[] = [];
         snap.forEach((d) => {
           deletePromises.push(deleteDoc(d.ref));
@@ -1110,7 +1143,7 @@ if (!carregouPostgres) {
         sent1DayCount++;
 
         try {
-          await setDoc(doc(firestoreDb, 'reviews', rev.id), { notified1DayAt: rev.notified1DayAt }, { merge: true });
+          await setDoc(doc(firestoreDb, 'companies', currentCompanyId(), 'reviews', rev.id), { notified1DayAt: rev.notified1DayAt }, { merge: true });
         } catch {}
       }
       // Case 2: 5 Days left (Faltando 5 dias ou entre 2 e 5 dias)
@@ -1141,7 +1174,7 @@ if (!carregouPostgres) {
         sent5DaysCount++;
 
         try {
-          await setDoc(doc(firestoreDb, 'reviews', rev.id), { notified5DaysAt: rev.notified5DaysAt }, { merge: true });
+          await setDoc(doc(firestoreDb, 'companies', currentCompanyId(), 'reviews', rev.id), { notified5DaysAt: rev.notified5DaysAt }, { merge: true });
         } catch {}
       }
     }
@@ -1449,7 +1482,7 @@ if (!carregouPostgres) {
               review.whatsappSentAt = new Date().toISOString();
               saveDb(activeDb);
               try {
-                await setDoc(doc(firestoreDb, 'reviews', review.id), {
+                await setDoc(doc(firestoreDb, 'companies', currentCompanyId(), 'reviews', review.id), {
                   rewardSentViaWhatsapp: true,
                   whatsappStatus: 'delivered',
                   whatsappSentAt: review.whatsappSentAt,

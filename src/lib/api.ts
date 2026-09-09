@@ -1,4 +1,12 @@
+import { getCompanyId } from './tenant';
 import { RestaurantSettings, RewardOption, Review, Waiter } from '../types';
+
+
+function tenantFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  const headers = new Headers(init.headers || {});
+  headers.set('X-Company-Id', getCompanyId());
+  return fetch(input, { ...init, headers });
+}
 
 export interface SyncDataResponse {
   settings: RestaurantSettings;
@@ -11,7 +19,7 @@ export interface SyncDataResponse {
 // Fetch all sync data from server
 export async function apiFetchSync(): Promise<SyncDataResponse | null> {
   try {
-    const res = await fetch('/api/sync', { cache: 'no-store' });
+    const res = await tenantFetch('/api/sync', { cache: 'no-store' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
   } catch (err) {
@@ -23,7 +31,7 @@ export async function apiFetchSync(): Promise<SyncDataResponse | null> {
 // Fetch latest reviews from server (for polling)
 export async function apiFetchReviews(): Promise<Review[] | null> {
   try {
-    const res = await fetch('/api/reviews', { cache: 'no-store' });
+    const res = await tenantFetch('/api/reviews', { cache: 'no-store' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     return data.reviews || [];
@@ -36,7 +44,7 @@ export async function apiFetchReviews(): Promise<Review[] | null> {
 // Submit a new customer review to the central server
 export async function apiSubmitReview(review: Review): Promise<{ success: boolean; review?: Review; error?: string }> {
   try {
-    const res = await fetch('/api/reviews', {
+    const res = await tenantFetch('/api/reviews', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(review),
@@ -56,7 +64,7 @@ export async function apiSubmitReview(review: Review): Promise<{ success: boolea
 // Validate / Claim a reward voucher on the central server
 export async function apiValidateReward(code: string, tableNumber?: number): Promise<{ success: boolean; review?: Review; error?: string }> {
   try {
-    const res = await fetch('/api/reviews/validate', {
+    const res = await tenantFetch('/api/reviews/validate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code, tableNumber }),
@@ -76,7 +84,7 @@ export async function apiValidateReward(code: string, tableNumber?: number): Pro
 // Sync settings to server
 export async function apiSaveSettings(settings: RestaurantSettings): Promise<boolean> {
   try {
-    const res = await fetch('/api/settings', {
+    const res = await tenantFetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),
@@ -91,7 +99,7 @@ export async function apiSaveSettings(settings: RestaurantSettings): Promise<boo
 // Update PIN directly on server
 export async function apiUpdatePin(pin: string): Promise<boolean> {
   try {
-    const res = await fetch('/api/settings/pin', {
+    const res = await tenantFetch('/api/settings/pin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pin }),
@@ -112,7 +120,7 @@ export async function apiSaveWhatsAppSettings(whatsappData: {
   autoSendMode?: 'silent_api' | 'auto_open' | 'open_app';
 }): Promise<boolean> {
   try {
-    const res = await fetch('/api/settings/whatsapp', {
+    const res = await tenantFetch('/api/settings/whatsapp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(whatsappData),
@@ -127,7 +135,7 @@ export async function apiSaveWhatsAppSettings(whatsappData: {
 // Sync rewards to server
 export async function apiSaveRewards(rewards: RewardOption[]): Promise<boolean> {
   try {
-    const res = await fetch('/api/rewards', {
+    const res = await tenantFetch('/api/rewards', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(rewards),
@@ -142,7 +150,7 @@ export async function apiSaveRewards(rewards: RewardOption[]): Promise<boolean> 
 // Sync waiters to server
 export async function apiSaveWaiters(waiters: Waiter[]): Promise<boolean> {
   try {
-    const res = await fetch('/api/waiters', {
+    const res = await tenantFetch('/api/waiters', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(waiters),
@@ -157,7 +165,7 @@ export async function apiSaveWaiters(waiters: Waiter[]): Promise<boolean> {
 // Delete a single review on server
 export async function apiDeleteReview(id: string): Promise<{ success: boolean; reviews?: Review[] }> {
   try {
-    const res = await fetch(`/api/reviews/${encodeURIComponent(id)}`, {
+    const res = await tenantFetch(`/api/reviews/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     });
     if (!res.ok) {
@@ -174,7 +182,7 @@ export async function apiDeleteReview(id: string): Promise<{ success: boolean; r
 // Clear all reviews on server
 export async function apiClearAllReviews(): Promise<boolean> {
   try {
-    const res = await fetch('/api/reviews', {
+    const res = await tenantFetch('/api/reviews', {
       method: 'DELETE',
     });
     return res.ok;
@@ -192,7 +200,7 @@ export async function apiSyncPush(data: {
   reviews?: Review[];
 }): Promise<{ success: boolean; message?: string }> {
   try {
-    const res = await fetch('/api/sync/push', {
+    const res = await tenantFetch('/api/sync/push', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -220,7 +228,7 @@ export async function apiTriggerExpiringNotifications(payload?: {
   reviews?: Review[];
 }> {
   try {
-    const res = await fetch('/api/notifications/expiring', {
+    const res = await tenantFetch('/api/notifications/expiring', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload || {}),

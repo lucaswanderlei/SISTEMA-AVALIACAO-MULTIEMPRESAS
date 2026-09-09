@@ -1,5 +1,6 @@
 import QRCode from 'qrcode';
 import { RestaurantSettings, RewardOption, Review, Waiter } from '../types';
+import { tenantKey } from './tenant';
 import { INITIAL_REWARDS, INITIAL_REVIEWS, INITIAL_SETTINGS, INITIAL_WAITERS } from '../data/mockData';
 
 const REVIEWS_KEY = 'restaurant_eval_reviews_v2';
@@ -14,13 +15,13 @@ const WAITERS_CUSTOMIZED_KEY = 'restaurant_eval_waiters_customized';
 
 export function savePin(pin: string): void {
   try {
-    localStorage.setItem(PIN_KEY, pin.trim());
+    localStorage.setItem(tenantKey(PIN_KEY), pin.trim());
   } catch {}
 }
 
 export function loadSavedPin(): string | null {
   try {
-    const p = localStorage.getItem(PIN_KEY);
+    const p = localStorage.getItem(tenantKey(PIN_KEY));
     return p && p.trim().length > 0 ? p.trim() : null;
   } catch {
     return null;
@@ -29,13 +30,13 @@ export function loadSavedPin(): string | null {
 
 export function saveWhatsAppConfig(config: { whatsappApiUrl?: string; whatsappApiToken?: string; whatsappCustomMessage?: string }): void {
   try {
-    localStorage.setItem(WHATSAPP_CONFIG_KEY, JSON.stringify(config));
+    localStorage.setItem(tenantKey(WHATSAPP_CONFIG_KEY), JSON.stringify(config));
   } catch {}
 }
 
 export function loadWhatsAppConfig(): { whatsappApiUrl?: string; whatsappApiToken?: string; whatsappCustomMessage?: string } | null {
   try {
-    const raw = localStorage.getItem(WHATSAPP_CONFIG_KEY);
+    const raw = localStorage.getItem(tenantKey(WHATSAPP_CONFIG_KEY));
     if (raw) return JSON.parse(raw);
   } catch {}
   return null;
@@ -43,7 +44,7 @@ export function loadWhatsAppConfig(): { whatsappApiUrl?: string; whatsappApiToke
 
 export function isRewardsCustomized(): boolean {
   try {
-    return localStorage.getItem(REWARDS_CUSTOMIZED_KEY) === 'true';
+    return localStorage.getItem(tenantKey(REWARDS_CUSTOMIZED_KEY)) === 'true';
   } catch {
     return false;
   }
@@ -51,13 +52,13 @@ export function isRewardsCustomized(): boolean {
 
 export function markRewardsCustomized(): void {
   try {
-    localStorage.setItem(REWARDS_CUSTOMIZED_KEY, 'true');
+    localStorage.setItem(tenantKey(REWARDS_CUSTOMIZED_KEY), 'true');
   } catch {}
 }
 
 export function isWaitersCustomized(): boolean {
   try {
-    return localStorage.getItem(WAITERS_CUSTOMIZED_KEY) === 'true';
+    return localStorage.getItem(tenantKey(WAITERS_CUSTOMIZED_KEY)) === 'true';
   } catch {
     return false;
   }
@@ -65,13 +66,13 @@ export function isWaitersCustomized(): boolean {
 
 export function markWaitersCustomized(): void {
   try {
-    localStorage.setItem(WAITERS_CUSTOMIZED_KEY, 'true');
+    localStorage.setItem(tenantKey(WAITERS_CUSTOMIZED_KEY), 'true');
   } catch {}
 }
 
 export function loadSettings(): RestaurantSettings {
   try {
-    const raw = localStorage.getItem(SETTINGS_KEY);
+    const raw = localStorage.getItem(tenantKey(SETTINGS_KEY));
     const savedPin = loadSavedPin();
     const savedWhatsApp = loadWhatsAppConfig();
     let merged: RestaurantSettings = { ...INITIAL_SETTINGS };
@@ -115,7 +116,7 @@ export function loadSettings(): RestaurantSettings {
 
 export function saveSettings(settings: RestaurantSettings): void {
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    localStorage.setItem(tenantKey(SETTINGS_KEY), JSON.stringify(settings));
     if (settings.managerPin && settings.managerPin.trim().length > 0) {
       savePin(settings.managerPin);
     }
@@ -133,7 +134,7 @@ export function saveSettings(settings: RestaurantSettings): void {
 
 export function loadWaiters(): Waiter[] {
   try {
-    const raw = localStorage.getItem(WAITERS_KEY);
+    const raw = localStorage.getItem(tenantKey(WAITERS_KEY));
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
@@ -148,7 +149,7 @@ export function loadWaiters(): Waiter[] {
 
 export function saveWaiters(waiters: Waiter[]): void {
   try {
-    localStorage.setItem(WAITERS_KEY, JSON.stringify(waiters));
+    localStorage.setItem(tenantKey(WAITERS_KEY), JSON.stringify(waiters));
     markWaitersCustomized();
   } catch (e) {
     console.error('Error saving waiters', e);
@@ -157,7 +158,7 @@ export function saveWaiters(waiters: Waiter[]): void {
 
 export function loadRewards(): RewardOption[] {
   try {
-    const raw = localStorage.getItem(REWARDS_KEY);
+    const raw = localStorage.getItem(tenantKey(REWARDS_KEY));
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
@@ -172,7 +173,7 @@ export function loadRewards(): RewardOption[] {
 
 export function saveRewards(rewards: RewardOption[]): void {
   try {
-    localStorage.setItem(REWARDS_KEY, JSON.stringify(rewards));
+    localStorage.setItem(tenantKey(REWARDS_KEY), JSON.stringify(rewards));
     markRewardsCustomized();
   } catch (e) {
     console.error('Error saving rewards', e);
@@ -181,7 +182,7 @@ export function saveRewards(rewards: RewardOption[]): void {
 
 export function loadDeletedReviewIds(): Set<string> {
   try {
-    const raw = localStorage.getItem(DELETED_REVIEWS_KEY);
+    const raw = localStorage.getItem(tenantKey(DELETED_REVIEWS_KEY));
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
@@ -198,7 +199,7 @@ export function markReviewDeleted(id: string): void {
   try {
     const current = loadDeletedReviewIds();
     current.add(id);
-    localStorage.setItem(DELETED_REVIEWS_KEY, JSON.stringify(Array.from(current)));
+    localStorage.setItem(tenantKey(DELETED_REVIEWS_KEY), JSON.stringify(Array.from(current)));
   } catch (e) {
     console.error('Error marking review deleted', e);
   }
@@ -206,17 +207,17 @@ export function markReviewDeleted(id: string): void {
 
 export function clearAllDeletedReviewIds(): void {
   try {
-    localStorage.removeItem(DELETED_REVIEWS_KEY);
+    localStorage.removeItem(tenantKey(DELETED_REVIEWS_KEY));
   } catch {}
 }
 
 export function loadReviews(): Review[] {
   try {
     // Purge legacy v1 mock reviews if found
-    if (localStorage.getItem('restaurant_eval_reviews_v1')) {
-      localStorage.removeItem('restaurant_eval_reviews_v1');
+    if (localStorage.getItem(tenantKey('restaurant_eval_reviews_v1'))) {
+      localStorage.removeItem(tenantKey('restaurant_eval_reviews_v1'));
     }
-    const raw = localStorage.getItem(REVIEWS_KEY);
+    const raw = localStorage.getItem(tenantKey(REVIEWS_KEY));
     if (raw) {
       const parsed: Review[] = JSON.parse(raw);
       if (Array.isArray(parsed)) {
@@ -234,7 +235,7 @@ export function saveReviews(reviews: Review[]): void {
   try {
     const deletedIds = loadDeletedReviewIds();
     const cleanReviews = reviews.filter((r) => r && r.id && !deletedIds.has(r.id));
-    localStorage.setItem(REVIEWS_KEY, JSON.stringify(cleanReviews));
+    localStorage.setItem(tenantKey(REVIEWS_KEY), JSON.stringify(cleanReviews));
   } catch (e) {
     console.error('Error saving reviews', e);
   }
@@ -242,12 +243,12 @@ export function saveReviews(reviews: Review[]): void {
 
 export function clearAllReviewsStorage(): void {
   try {
-    localStorage.removeItem(REVIEWS_KEY);
-    localStorage.removeItem(DELETED_REVIEWS_KEY);
-    localStorage.removeItem('restaurant_eval_reviews_v1');
-    localStorage.removeItem('restaurant_last_eval_date');
-    localStorage.removeItem('restaurant_last_eval_phone');
-    localStorage.removeItem('restaurant_last_eval_review');
+    localStorage.removeItem(tenantKey(REVIEWS_KEY));
+    localStorage.removeItem(tenantKey(DELETED_REVIEWS_KEY));
+    localStorage.removeItem(tenantKey('restaurant_eval_reviews_v1'));
+    localStorage.removeItem(tenantKey('restaurant_last_eval_date'));
+    localStorage.removeItem(tenantKey('restaurant_last_eval_phone'));
+    localStorage.removeItem(tenantKey('restaurant_last_eval_review'));
   } catch (e) {
     console.error('Error clearing reviews storage', e);
   }

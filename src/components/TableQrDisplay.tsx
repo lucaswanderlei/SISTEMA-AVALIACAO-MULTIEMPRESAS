@@ -1,3 +1,4 @@
+import { getCompanyId } from '../lib/tenant';
 import React, { useEffect, useState } from 'react';
 import {
   QrCode,
@@ -67,11 +68,12 @@ export const TableQrDisplay: React.FC<TableQrDisplayProps> = ({
       const url = new URL(customDomain.trim());
       url.searchParams.delete('mesa');
       url.searchParams.set('cliente', '1');
+      url.searchParams.set('empresa', getCompanyId());
       return url.toString();
     } catch {
       const base = customDomain.trim();
       const sep = base.includes('?') ? '&' : '?';
-      return `${base}${sep}cliente=1`;
+      return `${base}${sep}cliente=1&empresa=${encodeURIComponent(getCompanyId())}`;
     }
   };
 
@@ -81,11 +83,12 @@ export const TableQrDisplay: React.FC<TableQrDisplayProps> = ({
       const url = new URL(customDomain.trim());
       url.searchParams.set('mesa', String(tbl));
       url.searchParams.set('cliente', '1');
+      url.searchParams.set('empresa', getCompanyId());
       return url.toString();
     } catch {
       const base = customDomain.trim();
       const sep = base.includes('?') ? '&' : '?';
-      return `${base}${sep}mesa=${tbl}&cliente=1`;
+      return `${base}${sep}mesa=${tbl}&cliente=1&empresa=${encodeURIComponent(getCompanyId())}`;
     }
   };
 

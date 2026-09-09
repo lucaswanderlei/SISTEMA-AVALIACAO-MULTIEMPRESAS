@@ -1,3 +1,4 @@
+import { tenantKey } from '../lib/tenant';
 import React, { useState, useEffect } from 'react';
 import {
   Users,
@@ -129,9 +130,9 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
   useEffect(() => {
     try {
       const todayStr = new Date().toISOString().slice(0, 10);
-      const lastDate = localStorage.getItem('restaurant_last_eval_date');
+      const lastDate = localStorage.getItem(tenantKey('restaurant_last_eval_date'));
       if (lastDate === todayStr) {
-        const saved = localStorage.getItem('restaurant_last_eval_review');
+        const saved = localStorage.getItem(tenantKey('restaurant_last_eval_review'));
         if (saved) {
           const parsed: Review = JSON.parse(saved);
           setTodayEvaluatedReview(parsed);
@@ -320,9 +321,9 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
     // Save today's evaluation to local device state to prevent multiple daily submissions
     const todayStr = now.toISOString().slice(0, 10);
     try {
-      localStorage.setItem('restaurant_last_eval_date', todayStr);
-      localStorage.setItem('restaurant_last_eval_phone', customerPhone.replace(/\D/g, ''));
-      localStorage.setItem('restaurant_last_eval_review', JSON.stringify(newReview));
+      localStorage.setItem(tenantKey('restaurant_last_eval_date'), todayStr);
+      localStorage.setItem(tenantKey('restaurant_last_eval_phone'), customerPhone.replace(/\D/g, ''));
+      localStorage.setItem(tenantKey('restaurant_last_eval_review'), JSON.stringify(newReview));
       setTodayEvaluatedReview(newReview);
     } catch (err) {
       console.error('Error saving today evaluation', err);

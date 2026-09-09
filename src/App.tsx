@@ -1,3 +1,4 @@
+import { tenantKey, getCompanyId } from './lib/tenant';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   UtensilsCrossed,
@@ -107,12 +108,12 @@ export default function App() {
       // If customer is opening via QR link (?cliente=1 or ?origem=qrcode or has mesa)
       if (params.get('cliente') || params.get('origem') === 'qrcode' || params.get('mesa')) {
         try {
-          sessionStorage.removeItem('restaurant_manager_auth');
+          sessionStorage.removeItem(tenantKey('restaurant_manager_auth'));
         } catch {}
         return false;
       }
       try {
-        return sessionStorage.getItem('restaurant_manager_auth') === 'true';
+        return sessionStorage.getItem(tenantKey('restaurant_manager_auth')) === 'true';
       } catch {}
     }
     return false;
@@ -156,7 +157,7 @@ export default function App() {
         setIsManagerLoggedIn(false);
         setActiveView('customer');
         try {
-          sessionStorage.removeItem('restaurant_manager_auth');
+          sessionStorage.removeItem(tenantKey('restaurant_manager_auth'));
         } catch {}
       }
 
@@ -463,7 +464,7 @@ export default function App() {
     const correctPin = (settings.managerPin || '1234').trim();
     if (pinInput.trim() === correctPin) {
       try {
-        sessionStorage.setItem('restaurant_manager_auth', 'true');
+        sessionStorage.setItem(tenantKey('restaurant_manager_auth'), 'true');
       } catch {}
       setIsManagerLoggedIn(true);
       setActiveView(pendingView);
@@ -478,7 +479,7 @@ export default function App() {
 
   const handleLogoutManager = () => {
     try {
-      sessionStorage.removeItem('restaurant_manager_auth');
+      sessionStorage.removeItem(tenantKey('restaurant_manager_auth'));
     } catch {}
     setIsManagerLoggedIn(false);
     setActiveView('customer');

@@ -15,6 +15,7 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Review, RewardOption, RestaurantSettings, Waiter } from '../types';
+import { getCompanyId } from './tenant';
 
 export const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 /* CRITICAL: The app will break without firebaseConfig.firestoreDatabaseId */
@@ -98,10 +99,10 @@ export async function firestoreFetchAll(): Promise<{
   settings?: RestaurantSettings;
 } | null> {
   try {
-    const reviewsCol = collection(db, 'reviews');
-    const rewardsCol = collection(db, 'rewards');
-    const waitersCol = collection(db, 'waiters');
-    const settingsDoc = doc(db, 'settings', 'restaurant');
+    const reviewsCol = collection(db, 'companies', getCompanyId(), 'reviews');
+    const rewardsCol = collection(db, 'companies', getCompanyId(), 'rewards');
+    const waitersCol = collection(db, 'companies', getCompanyId(), 'waiters');
+    const settingsDoc = doc(db, 'companies', getCompanyId(), 'settings', 'restaurant');
 
     const [reviewsSnap, rewSnap, waitSnap] = await Promise.all([
       getDocs(reviewsCol).catch((err) => {
@@ -169,7 +170,7 @@ export function sanitizeForFirestore<T extends Record<string, any>>(obj: T): T {
 export async function firestoreFetchReviews(): Promise<Review[]> {
   const path = 'reviews';
   try {
-    const reviewsCol = collection(db, 'reviews');
+    const reviewsCol = collection(db, 'companies', getCompanyId(), 'reviews');
     const snap = await getDocs(reviewsCol);
     const reviews: Review[] = [];
     snap.forEach((d) => {
@@ -191,7 +192,7 @@ export function subscribeToReviews(
 ): () => void {
   const path = 'reviews';
   return onSnapshot(
-    collection(db, 'reviews'),
+    collection(db, 'companies', getCompanyId(), 'reviews'),
     (snap) => {
       const reviews: Review[] = [];
       snap.forEach((d) => {
@@ -214,7 +215,7 @@ export async function firestoreSaveReview(review: Review): Promise<boolean> {
   const path = `reviews/${review.id}`;
   try {
     const cleaned = sanitizeForFirestore(review);
-    await setDoc(doc(db, 'reviews', review.id), cleaned, { merge: true });
+    await setDoc(doc(db, 'companies', getCompanyId(), 'reviews', review.id), cleaned, { merge: true });
     return true;
   } catch (error) {
     console.error('[Firebase] Error saving review to Firestore:', error);
@@ -231,7 +232,7 @@ export async function firestoreSaveRewards(rewards: RewardOption[]): Promise<boo
   try {
     const batch = writeBatch(db);
     rewards.forEach((r) => {
-      batch.set(doc(db, 'rewards', r.id), sanitizeForFirestore(r));
+      batch.set(doc(db, 'companies', getCompanyId(), 'rewards', r.id), sanitizeForFirestore(r));
     });
     await batch.commit();
     return true;
@@ -244,7 +245,7 @@ export async function firestoreSaveWaiters(waiters: Waiter[]): Promise<boolean> 
   try {
     const batch = writeBatch(db);
     waiters.forEach((w) => {
-      batch.set(doc(db, 'waiters', w.id), sanitizeForFirestore(w));
+      batch.set(doc(db, 'companies', getCompanyId(), 'waiters', w.id), sanitizeForFirestore(w));
     });
     await batch.commit();
     return true;
@@ -256,7 +257,7 @@ export async function firestoreSaveWaiters(waiters: Waiter[]): Promise<boolean> 
 export async function firestoreSaveSettings(settings: RestaurantSettings): Promise<boolean> {
   const path = 'settings/restaurant';
   try {
-    await setDoc(doc(db, 'settings', 'restaurant'), sanitizeForFirestore(settings));
+    await setDoc(doc(db, 'companies', getCompanyId(), 'settings', 'restaurant'), sanitizeForFirestore(settings));
     return true;
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
@@ -267,7 +268,7 @@ export async function firestoreSaveSettings(settings: RestaurantSettings): Promi
 export async function firestoreFetchSettings(): Promise<RestaurantSettings | null> {
   const path = 'settings/restaurant';
   try {
-    const snap = await getDoc(doc(db, 'settings', 'restaurant'));
+    const snap = await getDoc(doc(db, 'companies', getCompanyId(), 'settings', 'restaurant'));
     if (snap.exists()) {
       return snap.data() as RestaurantSettings;
     }
@@ -281,7 +282,7 @@ export async function firestoreFetchSettings(): Promise<RestaurantSettings | nul
 export async function firestoreDeleteReview(id: string): Promise<boolean> {
   const path = `reviews/${id}`;
   try {
-    await deleteDoc(doc(db, 'reviews', id));
+    await deleteDoc(doc(db, 'companies', getCompanyId(), 'reviews', id));
     return true;
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
