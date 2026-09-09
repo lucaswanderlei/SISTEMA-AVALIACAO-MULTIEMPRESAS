@@ -69,6 +69,7 @@ import {
 import { CustomerEvaluation } from './components/CustomerEvaluation';
 import { TableQrDisplay } from './components/TableQrDisplay';
 import { ManagerDashboard } from './components/ManagerDashboard';
+import { SuperAdmin } from './components/SuperAdmin';
 
 function playChimeSound() {
   try {
@@ -90,6 +91,9 @@ function playChimeSound() {
 }
 
 export default function App() {
+  if (typeof window !== 'undefined' && window.location.pathname.replace(/\/$/, '') === '/super-admin') {
+    return <SuperAdmin />;
+  }
   const [settings, setSettings] = useState<RestaurantSettings>(loadSettings);
   const [rewards, setRewards] = useState<RewardOption[]>(loadRewards);
   const [reviews, setReviews] = useState<Review[]>(loadReviews);
