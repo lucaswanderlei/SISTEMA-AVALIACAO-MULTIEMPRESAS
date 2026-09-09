@@ -27,6 +27,7 @@ import { RatingCriteria, RestaurantSettings, RewardOption, Review, Waiter } from
 import { QUICK_TAGS_OPTIONS, WAITER_COMPLIMENTS } from '../data/mockData';
 import { RatingStarScale } from './RatingStarScale';
 import { CoxinhaIcon } from './CoxinhaIcon';
+import { RatingChoiceIcon } from './RatingChoiceIcon';
 import { RewardRoulette } from './RewardRoulette';
 import { RewardVoucherCard } from './RewardVoucherCard';
 import { generateRewardCode, loadReviews } from '../lib/storage';
@@ -203,7 +204,7 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
       ratings.products === 0 ||
       ratings.waitTime === 0
     ) {
-      setValidationError('Por favor, avalie com as coxinhas todos os 4 quesitos antes de continuar.');
+      setValidationError('Por favor, avalie todos os 4 quesitos antes de continuar.');
       window.scrollTo({ top: 100, behavior: 'smooth' });
       return;
     }
@@ -619,6 +620,7 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
               value={ratings.service}
               onChange={(val) => setRatings((prev) => ({ ...prev, service: val }))}
               required
+              ratingIcon={settings.ratingIcon || 'coxinha'}
             />
 
             {/* Ambiente */}
@@ -630,6 +632,7 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
               value={ratings.ambiance}
               onChange={(val) => setRatings((prev) => ({ ...prev, ambiance: val }))}
               required
+              ratingIcon={settings.ratingIcon || 'coxinha'}
             />
 
             {/* Produtos / Comida */}
@@ -641,6 +644,7 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
               value={ratings.products}
               onChange={(val) => setRatings((prev) => ({ ...prev, products: val }))}
               required
+              ratingIcon={settings.ratingIcon || 'coxinha'}
             />
 
             {/* Tempo de Espera */}
@@ -652,6 +656,7 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
               value={ratings.waitTime}
               onChange={(val) => setRatings((prev) => ({ ...prev, waitTime: val }))}
               required
+              ratingIcon={settings.ratingIcon || 'coxinha'}
             />
           </div>
 
@@ -776,24 +781,25 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
                 <div className="pt-3 border-t border-stone-100 space-y-3 bg-amber-50/40 p-4 rounded-2xl border border-amber-200/50 animate-fade-in">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <span className="text-xs font-extrabold text-stone-800 flex items-center gap-1.5">
-                      <CoxinhaIcon filled className="w-4 h-4 inline-block" />
+                      <RatingChoiceIcon type={settings.ratingIcon || 'coxinha'} filled className="w-4 h-4 inline-block" />
                       Avaliação do atendimento de {selectedWaiter.name.split(' ')[0]}:
                     </span>
 
-                    {/* Coxinhas scale */}
+                    {/* Escala usa o ícone escolhido pela empresa */}
                     <div className="flex items-center gap-1">
-                      {[1, 2, 3, 4, 5].map((coxinha) => (
+                      {[1, 2, 3, 4, 5].map((ratingValue) => (
                         <button
-                          key={coxinha}
+                          key={ratingValue}
                           type="button"
-                          onClick={() => setWaiterRating(coxinha)}
+                          onClick={() => setWaiterRating(ratingValue)}
                           className="p-1 text-stone-300 hover:text-amber-400 transition cursor-pointer hover:scale-110"
-                          title={`${coxinha} ${coxinha === 1 ? 'coxinha' : 'coxinhas'}`}
+                          title={`${ratingValue} de 5`}
                         >
-                          <CoxinhaIcon
-                            filled={coxinha <= waiterRating}
+                          <RatingChoiceIcon
+                            type={settings.ratingIcon || 'coxinha'}
+                            filled={ratingValue <= waiterRating}
                             className={`w-6 h-6 transition-all ${
-                              coxinha <= waiterRating
+                              ratingValue <= waiterRating
                                 ? 'scale-105'
                                 : 'text-stone-300 hover:text-amber-400'
                             }`}

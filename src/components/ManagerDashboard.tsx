@@ -40,6 +40,8 @@ import {
 import { RestaurantSettings, RewardOption, Review, Waiter } from '../types';
 import { CustomerDatabaseView } from './CustomerDatabaseView';
 import { apiUpdatePin } from '../lib/api';
+import { RatingChoiceIcon } from './RatingChoiceIcon';
+import type { RatingIconType } from '../types';
 
 interface ManagerDashboardProps {
   reviews: Review[];
@@ -73,7 +75,13 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
   // Tabs within dashboard
   const [activeTab, setActiveTab] = useState<
     'metrics' | 'reviews' | 'customers' | 'waiters' | 'validator' | 'rewards' | 'settings'
-  >('metrics');
+  >(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (window.location.pathname.replace(/\/$/, '') === '/gerencia' || params.get('config') === '1') return 'settings';
+    }
+    return 'metrics';
+  });
 
   // Database Save state
   const [isSavingDb, setIsSavingDb] = useState(false);
@@ -2364,6 +2372,59 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
               onChange={(e) => onUpdateSettings({ ...settings, tagline: e.target.value })}
               className="w-full text-xs p-2.5 rounded-xl border border-stone-200 focus:border-rose-500 outline-none"
             />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-stone-700 mb-1">Cor principal da empresa</label>
+              <div className="flex gap-2 items-center">
+                <input type="color" value={settings.primaryColor || '#e11d48'} onChange={(e) => onUpdateSettings({ ...settings, primaryColor: e.target.value })} className="h-10 w-14 rounded-lg border border-stone-200 p-1 bg-white" />
+                <input type="text" value={settings.primaryColor || '#e11d48'} onChange={(e) => onUpdateSettings({ ...settings, primaryColor: e.target.value })} className="flex-1 text-xs p-2.5 rounded-xl border border-stone-200 focus:border-rose-500 outline-none font-mono" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-stone-700 mb-1">URL da logomarca</label>
+              <input type="url" value={settings.logoUrl || ''} onChange={(e) => onUpdateSettings({ ...settings, logoUrl: e.target.value })} placeholder="https://.../logo.png" className="w-full text-xs p-2.5 rounded-xl border border-stone-200 focus:border-rose-500 outline-none" />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-stone-700 mb-2">
+              Ícone da avaliação (1 a 5)
+            </label>
+            <p className="text-[11px] text-stone-400 mb-3">
+              Escolha o símbolo que seus clientes tocarão para dar as notas.
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              {([
+                ['star', 'Estrelas'],
+                ['coxinha', 'Coxinhas'],
+                ['brigadeiro', 'Brigadeiros'],
+                ['cake', 'Fatias de bolo'],
+                ['pizza', 'Fatias de pizza'],
+              ] as [RatingIconType, string][]).map(([value, label]) => {
+                const selected = (settings.ratingIcon || 'coxinha') === value;
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => onUpdateSettings({ ...settings, ratingIcon: value })}
+                    className={`rounded-xl border p-3 flex flex-col items-center gap-2 text-[11px] font-bold transition ${
+                      selected
+                        ? 'border-rose-500 bg-rose-50 text-rose-700 ring-2 ring-rose-100'
+                        : 'border-stone-200 bg-white text-stone-600 hover:border-stone-300 hover:bg-stone-50'
+                    }`}
+                  >
+                    <RatingChoiceIcon
+                      type={value}
+                      filled
+                      className={`w-8 h-8 ${selected ? 'text-rose-600' : 'text-stone-500'}`}
+                    />
+                    <span className="text-center leading-tight">{label}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <div>

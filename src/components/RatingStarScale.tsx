@@ -1,5 +1,6 @@
 import React from 'react';
-import { CoxinhaIcon } from './CoxinhaIcon';
+import { RatingChoiceIcon } from './RatingChoiceIcon';
+import type { RatingIconType } from '../types';
 
 interface RatingStarScaleProps {
   id: string;
@@ -9,6 +10,7 @@ interface RatingStarScaleProps {
   value: number;
   onChange: (val: number) => void;
   required?: boolean;
+  ratingIcon?: RatingIconType;
 }
 
 const DESCRIPTIONS = [
@@ -27,6 +29,7 @@ export const RatingStarScale: React.FC<RatingStarScaleProps> = ({
   icon,
   value,
   onChange,
+  ratingIcon = 'coxinha',
 }) => {
   const getBadgeColor = (score: number) => {
     if (score === 5) return 'bg-emerald-50 text-emerald-700 border-emerald-200';
@@ -65,27 +68,28 @@ export const RatingStarScale: React.FC<RatingStarScaleProps> = ({
         )}
       </div>
 
-      {/* Coxinhas Row */}
+      {/* Escala de avaliação personalizável */}
       <div className="flex items-center justify-between pt-2">
         <div className="flex items-center gap-1.5 sm:gap-2">
-          {[1, 2, 3, 4, 5].map((coxinha) => {
-            const isFilled = coxinha <= value;
+          {[1, 2, 3, 4, 5].map((score) => {
+            const isFilled = score <= value;
             return (
               <button
-                key={coxinha}
+                key={score}
                 type="button"
-                id={`btn-rate-${id}-${coxinha}`}
-                onClick={() => onChange(coxinha)}
+                id={`btn-rate-${id}-${score}`}
+                onClick={() => onChange(score)}
                 className={`p-1.5 sm:p-2 rounded-xl transition transform active:scale-90 hover:scale-110 focus:outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer ${
                   isFilled ? 'bg-amber-50' : 'hover:bg-stone-100'
                 }`}
-                title={`${coxinha} ${coxinha === 1 ? 'coxinha' : 'coxinhas'} - ${DESCRIPTIONS[coxinha]}`}
+                title={`${score} de 5 - ${DESCRIPTIONS[score]}`}
               >
-                <CoxinhaIcon
+                <RatingChoiceIcon
+                  type={ratingIcon}
                   filled={isFilled}
                   className={`w-7 h-7 sm:w-8 sm:h-8 transition-all ${
                     isFilled
-                      ? 'scale-105'
+                      ? 'scale-105 text-amber-500'
                       : 'text-stone-300 hover:text-amber-400'
                   }`}
                 />
