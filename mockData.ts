@@ -4,6 +4,7 @@ export const INITIAL_SETTINGS: RestaurantSettings = {
   name: 'Sr. Coxita',
   tagline: 'As melhores coxinhas e delícias artesanais',
   primaryColor: '#e11d48',
+  ratingIcon: 'coxinha',
   totalTables: 24,
   activeRewardMode: 'wheel',
   fixedRewardId: 'reward-1',

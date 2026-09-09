@@ -40,6 +40,8 @@ import {
 import { RestaurantSettings, RewardOption, Review, Waiter } from '../types';
 import { CustomerDatabaseView } from './CustomerDatabaseView';
 import { apiUpdatePin } from '../lib/api';
+import { RatingChoiceIcon } from './RatingChoiceIcon';
+import type { RatingIconType } from '../types';
 
 interface ManagerDashboardProps {
   reviews: Review[];
@@ -2377,6 +2379,45 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
             <div>
               <label className="block text-xs font-semibold text-stone-700 mb-1">URL da logomarca</label>
               <input type="url" value={settings.logoUrl || ''} onChange={(e) => onUpdateSettings({ ...settings, logoUrl: e.target.value })} placeholder="https://.../logo.png" className="w-full text-xs p-2.5 rounded-xl border border-stone-200 focus:border-rose-500 outline-none" />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-stone-700 mb-2">
+              Ícone da avaliação (1 a 5)
+            </label>
+            <p className="text-[11px] text-stone-400 mb-3">
+              Escolha o símbolo que seus clientes tocarão para dar as notas.
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              {([
+                ['star', 'Estrelas'],
+                ['coxinha', 'Coxinhas'],
+                ['brigadeiro', 'Brigadeiros'],
+                ['cake', 'Fatias de bolo'],
+                ['pizza', 'Fatias de pizza'],
+              ] as [RatingIconType, string][]).map(([value, label]) => {
+                const selected = (settings.ratingIcon || 'coxinha') === value;
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => onUpdateSettings({ ...settings, ratingIcon: value })}
+                    className={`rounded-xl border p-3 flex flex-col items-center gap-2 text-[11px] font-bold transition ${
+                      selected
+                        ? 'border-rose-500 bg-rose-50 text-rose-700 ring-2 ring-rose-100'
+                        : 'border-stone-200 bg-white text-stone-600 hover:border-stone-300 hover:bg-stone-50'
+                    }`}
+                  >
+                    <RatingChoiceIcon
+                      type={value}
+                      filled
+                      className={`w-8 h-8 ${selected ? 'text-rose-600' : 'text-stone-500'}`}
+                    />
+                    <span className="text-center leading-tight">{label}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 

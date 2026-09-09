@@ -619,6 +619,7 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
               value={ratings.service}
               onChange={(val) => setRatings((prev) => ({ ...prev, service: val }))}
               required
+              ratingIcon={settings.ratingIcon || 'coxinha'}
             />
 
             {/* Ambiente */}
@@ -630,6 +631,7 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
               value={ratings.ambiance}
               onChange={(val) => setRatings((prev) => ({ ...prev, ambiance: val }))}
               required
+              ratingIcon={settings.ratingIcon || 'coxinha'}
             />
 
             {/* Produtos / Comida */}
@@ -641,6 +643,7 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
               value={ratings.products}
               onChange={(val) => setRatings((prev) => ({ ...prev, products: val }))}
               required
+              ratingIcon={settings.ratingIcon || 'coxinha'}
             />
 
             {/* Tempo de Espera */}
@@ -652,6 +655,7 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
               value={ratings.waitTime}
               onChange={(val) => setRatings((prev) => ({ ...prev, waitTime: val }))}
               required
+              ratingIcon={settings.ratingIcon || 'coxinha'}
             />
           </div>
 

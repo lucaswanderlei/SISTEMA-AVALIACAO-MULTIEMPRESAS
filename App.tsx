@@ -154,7 +154,16 @@ export default function App() {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const isClientUrl = params.get('cliente') || params.get('origem') === 'qrcode';
+      const isManagerUrl = params.get('gerencia') === '1';
       const mesaParam = params.get('mesa');
+
+      if (isManagerUrl && !isClientUrl) {
+        setActiveView('manager');
+        setPendingView('manager');
+        const authenticated = sessionStorage.getItem(tenantKey('restaurant_manager_auth')) === 'true';
+        setIsManagerLoggedIn(authenticated);
+        if (!authenticated) setShowPinModal(true);
+      }
 
       if (isClientUrl) {
         // Enforce customer mode when scanning QR code

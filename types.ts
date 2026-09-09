@@ -55,10 +55,13 @@ export interface RewardOption {
   probabilityWeight?: number;
 }
 
+export type RatingIconType = 'star' | 'coxinha' | 'brigadeiro' | 'cake' | 'pizza';
+
 export interface RestaurantSettings {
   name: string;
   tagline: string;
   primaryColor: string;
+  ratingIcon?: RatingIconType; // ícone usado na escala de 1 a 5
   logoUrl?: string;
   totalTables: number;
   activeRewardMode: 'wheel' | 'fixed'; // Gira roleta ou ganha brinde fixo
