@@ -139,7 +139,11 @@ export default function App() {
     return 0;
   });
 
-  const [activeView, setActiveView] = useState<'customer' | 'qr_display' | 'manager'>(() => directManagerRoute ? 'manager' : 'customer');
+  const [activeView, setActiveView] = useState<'customer' | 'qr_display' | 'manager'>(() => {
+    if (typeof window === 'undefined') return 'customer';
+    const params = new URLSearchParams(window.location.search);
+    return (directManagerRoute || params.get('gerencia') === '1') ? 'manager' : 'customer';
+  });
   const [notification, setNotification] = useState<string | null>(null);
   const [isFirebaseConnected, setIsFirebaseConnected] = useState<boolean>(true);
 
