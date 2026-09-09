@@ -80,6 +80,7 @@ const DEFAULT_SETTINGS = {
   name: 'Sr. Coxita',
   tagline: 'As melhores coxinhas e delícias artesanais',
   primaryColor: '#e11d48',
+  logoUrl: '',
   totalTables: 24,
   activeRewardMode: 'wheel',
   fixedRewardId: 'reward-1',
@@ -274,7 +275,27 @@ function normalizeCompanyId(value: unknown): string {
 }
 function currentCompanyId(): string { return tenantContext.getStore()?.companyId || 'demo'; }
 function freshDb(): RestaurantDb {
-  return { settings: { ...DEFAULT_SETTINGS, name: 'Nova Empresa' }, rewards: JSON.parse(JSON.stringify(DEFAULT_REWARDS)), waiters: [], reviews: [] };
+  return {
+    settings: {
+      ...DEFAULT_SETTINGS,
+      name: 'Nova Empresa',
+      tagline: 'Sua opinião é muito importante para nós',
+      primaryColor: '#e11d48',
+      logoUrl: '',
+      totalTables: 20,
+      managerPin: '1234',
+      autoSendWhatsApp: false,
+      whatsappApiUrl: '',
+      whatsappApiToken: '',
+      whatsappCustomMessage: '',
+      whatsappWebhookVerifyToken: '',
+    },
+    rewards: [
+      { id:'reward-1', title:'BRINDE ESPECIAL', description:'Cortesia especial oferecida pelo estabelecimento.', iconName:'Gift', category:'appetizer', enabled:true, probabilityWeight:100 }
+    ],
+    waiters: [],
+    reviews: []
+  };
 }
 async function loadCompanyDb(companyId: string): Promise<RestaurantDb> {
   if (tenantDbs.has(companyId)) return tenantDbs.get(companyId)!;
@@ -615,7 +636,7 @@ if (!carregouPostgres) {
         if (cleanUrl && !cleanUrl.includes('SEU_PHONE_NUMBER_ID')) {
           activeDb.settings.whatsappApiUrl = cleanUrl;
         } else if (!activeDb.settings.whatsappApiUrl) {
-          activeDb.settings.whatsappApiUrl = 'https://graph.facebook.com/v20.0/1295064457026684/messages';
+          activeDb.settings.whatsappApiUrl = '';
         }
       }
       if (whatsappApiToken !== undefined) {
@@ -623,7 +644,7 @@ if (!carregouPostgres) {
         if (cleanToken) {
           activeDb.settings.whatsappApiToken = cleanToken;
         } else if (!activeDb.settings.whatsappApiToken) {
-          activeDb.settings.whatsappApiToken = 'EAAM3KZAyByKsBSZAlDyeTdP0ByPcO2KZAhzpjTnZAVDDdjqJw7g2MglybEXA23UUUXLr4tFiwpSAz4fGwvxuTJOpcWzhLhD9o2IbrlHb3Dp7Jq1AW0ifVi2mbSrvlZC2VYjsCMsSWtymV23NgoyP5jjzvTdbD6gdXCIQ2FUUPQRYJ5JTMDbQNE3vKuRiTDapvNBgLGAszhhYFkcpopidqbceKbZBTCY2BoILQVAho6pM8r8z8cZAAbqyQ8ZCpMyyHkVjHdK8mvUJ5I0vyIZBb4ZCXPXDvtOHAN';
+          activeDb.settings.whatsappApiToken = '';
         }
       }
       if (whatsappCustomMessage !== undefined) {

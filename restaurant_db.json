@@ -1,0 +1,157 @@
+{
+  "settings": {
+    "name": "Sr. Coxita",
+    "tagline": "As melhores coxinhas e delícias artesanais",
+    "primaryColor": "#e11d48",
+    "totalTables": 24,
+    "activeRewardMode": "wheel",
+    "fixedRewardId": "reward-1",
+    "requireName": false,
+    "rewardDelayHours": 24,
+    "rewardValidityDays": 15,
+    "autoSendWhatsApp": true,
+    "autoSendMode": "silent_api",
+    "managerPin": "2325",
+    "whatsappApiUrl": "https://graph.facebook.com/v20.0/1295064457026684/messages",
+    "whatsappApiToken": "",
+    "whatsappCustomMessage": "",
+    "whatsappTemplateName": "hello_world",
+    "whatsappTemplateLanguage": "pt_BR",
+    "whatsappWebhookVerifyToken": "srcoxita_webhook_2026"
+  },
+  "rewards": [
+    {
+      "id": "reward-1",
+      "title": "PORÇÃO DE BATATA FRITA",
+      "description": "Batata frita crocante por fora e macia por dentro, servida quentinha.",
+      "iconName": "UtensilsCrossed",
+      "category": "appetizer",
+      "enabled": true,
+      "probabilityWeight": 45
+    },
+    {
+      "id": "reward-2",
+      "title": "CHURROS MIX TRADICIONAL",
+      "description": "Mini churros crocantes recheados, polvilhados no açúcar com canela.",
+      "iconName": "Cake",
+      "category": "dessert",
+      "enabled": true,
+      "probabilityWeight": 45
+    },
+    {
+      "id": "reward-3",
+      "title": "10 % DE DESCONTO",
+      "description": "10% de desconto no valor total da sua comanda no Sr. Coxita.",
+      "iconName": "Percent",
+      "category": "discount",
+      "enabled": true,
+      "probabilityWeight": 5
+    },
+    {
+      "id": "reward-4",
+      "title": "5% DE DESCONTO",
+      "description": "5% de desconto no valor total da sua comanda no Sr. Coxita.",
+      "iconName": "Percent",
+      "category": "discount",
+      "enabled": true,
+      "probabilityWeight": 5
+    }
+  ],
+  "waiters": [
+    {
+      "id": "w-1788576698029",
+      "name": "Ana",
+      "role": "Garçonete",
+      "active": true,
+      "createdAt": "2026-09-05T02:51:38.029Z"
+    },
+    {
+      "id": "w-1788576709710",
+      "name": "Kelly",
+      "role": "Garçonete",
+      "active": true,
+      "createdAt": "2026-09-05T02:51:49.710Z"
+    },
+    {
+      "id": "w-1788576719329",
+      "name": "Ingrid",
+      "role": "Garçonete",
+      "active": true,
+      "createdAt": "2026-09-05T02:51:59.329Z"
+    }
+  ],
+  "reviews": [
+    {
+      "availableFrom": "2026-09-09T18:53:22.298Z",
+      "createdAt": "2026-09-08T18:53:22.298Z",
+      "criticism": "",
+      "customerName": "coxi",
+      "customerPhone": "(82) 99317-4354",
+      "expiresAt": "2026-09-23T18:53:22.298Z",
+      "id": "rev-1788893602298",
+      "quickTags": [],
+      "ratings": {
+        "ambiance": 5,
+        "products": 5,
+        "service": 5,
+        "waitTime": 5
+      },
+      "rewardClaimed": false,
+      "rewardCode": "BRINDE-3887",
+      "rewardTitle": "PORÇÃO DE BATATA FRITA",
+      "suggestion": "",
+      "tableNumber": 5,
+      "waiterId": "w-1788576698029",
+      "waiterName": "Ana",
+      "waiterRating": 5,
+      "whatsappSentAt": "2026-09-08T18:53:22.298Z",
+      "whatsappStatus": "sent_silently"
+    },
+    {
+      "availableFrom": "2026-09-09T18:36:27.848Z",
+      "createdAt": "2026-09-08T18:36:27.848Z",
+      "criticism": "",
+      "customerName": "vitoria",
+      "customerPhone": "(82) 99673-6274",
+      "expiresAt": "2026-09-23T18:36:27.848Z",
+      "id": "rev-1788892587849",
+      "quickTags": [],
+      "ratings": {
+        "ambiance": 5,
+        "products": 5,
+        "service": 5,
+        "waitTime": 5
+      },
+      "rewardClaimed": false,
+      "rewardCode": "BRINDE-2605",
+      "rewardTitle": "PORÇÃO DE BATATA FRITA",
+      "suggestion": "",
+      "tableNumber": 5,
+      "whatsappSentAt": "2026-09-08T18:36:27.848Z",
+      "whatsappStatus": "sent_silently"
+    },
+    {
+      "availableFrom": "2026-09-09T18:35:34.705Z",
+      "createdAt": "2026-09-08T18:35:34.705Z",
+      "criticism": "",
+      "customerName": "LUCAS",
+      "customerPhone": "(82) 99325-9566",
+      "expiresAt": "2026-09-23T18:35:34.705Z",
+      "id": "rev-1788892534705",
+      "quickTags": [],
+      "ratings": {
+        "ambiance": 5,
+        "products": 5,
+        "service": 5,
+        "waitTime": 5
+      },
+      "rewardClaimed": false,
+      "rewardCode": "BRINDE-8622",
+      "rewardTitle": "CHURROS MIX TRADICIONAL",
+      "suggestion": "",
+      "tableNumber": 7,
+      "whatsappSentAt": "2026-09-08T18:35:34.705Z",
+      "whatsappStatus": "sent_silently"
+    }
+  ]
+}
