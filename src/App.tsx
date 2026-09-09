@@ -94,6 +94,7 @@ export default function App() {
   if (typeof window !== 'undefined' && window.location.pathname.replace(/\/$/, '') === '/super-admin') {
     return <SuperAdmin />;
   }
+  const directManagerRoute = typeof window !== 'undefined' && window.location.pathname.replace(/\/$/, '') === '/gerencia';
   const [settings, setSettings] = useState<RestaurantSettings>(loadSettings);
   const [rewards, setRewards] = useState<RewardOption[]>(loadRewards);
   const [reviews, setReviews] = useState<Review[]>(loadReviews);
@@ -110,7 +111,7 @@ export default function App() {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       // If customer is opening via QR link (?cliente=1 or ?origem=qrcode or has mesa)
-      if (params.get('cliente') || params.get('origem') === 'qrcode' || params.get('mesa')) {
+      if (!directManagerRoute && (params.get('cliente') || params.get('origem') === 'qrcode' || params.get('mesa'))) {
         try {
           sessionStorage.removeItem(tenantKey('restaurant_manager_auth'));
         } catch {}
@@ -138,7 +139,11 @@ export default function App() {
     return 0;
   });
 
-  const [activeView, setActiveView] = useState<'customer' | 'qr_display' | 'manager'>('customer');
+  const [activeView, setActiveView] = useState<'customer' | 'qr_display' | 'manager'>(() => {
+    if (typeof window === 'undefined') return 'customer';
+    const params = new URLSearchParams(window.location.search);
+    return (directManagerRoute || params.get('gerencia') === '1') ? 'manager' : 'customer';
+  });
   const [notification, setNotification] = useState<string | null>(null);
   const [isFirebaseConnected, setIsFirebaseConnected] = useState<boolean>(true);
 
@@ -154,9 +159,18 @@ export default function App() {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const isClientUrl = params.get('cliente') || params.get('origem') === 'qrcode';
+      const isManagerUrl = directManagerRoute || params.get('gerencia') === '1';
       const mesaParam = params.get('mesa');
 
-      if (isClientUrl) {
+      if (isManagerUrl && !isClientUrl) {
+        setActiveView('manager');
+        setPendingView('manager');
+        const authenticated = sessionStorage.getItem(tenantKey('restaurant_manager_auth')) === 'true';
+        setIsManagerLoggedIn(authenticated);
+        if (!authenticated) setShowPinModal(true);
+      }
+
+      if (isClientUrl && !isManagerUrl) {
         // Enforce customer mode when scanning QR code
         setIsManagerLoggedIn(false);
         setActiveView('customer');
@@ -197,22 +211,13 @@ export default function App() {
             apiUpdatePin(effectivePin).catch(() => {});
           }
 
-          // WhatsApp API persistence merge - Always guarantee Meta Cloud API defaults
-          const defaultMetaUrl = 'https://graph.facebook.com/v20.0/1295064457026684/messages';
-          const defaultMetaToken = 'EAAM3KZAyByKsBSZAlDyeTdP0ByPcO2KZAhzpjTnZAVDDdjqJw7g2MglybEXA23UUUXLr4tFiwpSAz4fGwvxuTJOpcWzhLhD9o2IbrlHb3Dp7Jq1AW0ifVi2mbSrvlZC2VYjsCMsSWtymV23NgoyP5jjzvTdbD6gdXCIQ2FUUPQRYJ5JTMDbQNE3vKuRiTDapvNBgLGAszhhYFkcpopidqbceKbZBTCY2BoILQVAho6pM8r8z8cZAAbqyQ8ZCpMyyHkVjHdK8mvUJ5I0vyIZBb4ZCXPXDvtOHAN';
-
-          let effectiveWhatsAppUrl = syncData.settings.whatsappApiUrl || localWhatsApp?.whatsappApiUrl || localSettings.whatsappApiUrl || defaultMetaUrl;
-          if (effectiveWhatsAppUrl.includes('SEU_PHONE_NUMBER_ID') || !effectiveWhatsAppUrl) {
-            effectiveWhatsAppUrl = defaultMetaUrl;
-          }
-          let effectiveWhatsAppToken = syncData.settings.whatsappApiToken || localWhatsApp?.whatsappApiToken || localSettings.whatsappApiToken || defaultMetaToken;
-          if (!effectiveWhatsAppToken) {
-            effectiveWhatsAppToken = defaultMetaToken;
-          }
+          // WhatsApp API persistence merge - credentials are always tenant-specific.
+          const effectiveWhatsAppUrl = syncData.settings.whatsappApiUrl || localWhatsApp?.whatsappApiUrl || localSettings.whatsappApiUrl || '';
+          const effectiveWhatsAppToken = syncData.settings.whatsappApiToken || localWhatsApp?.whatsappApiToken || localSettings.whatsappApiToken || '';
           const effectiveWhatsAppMessage = syncData.settings.whatsappCustomMessage || localWhatsApp?.whatsappCustomMessage || localSettings.whatsappCustomMessage || '';
 
           // If local or server had incomplete WhatsApp credentials, sync the official Meta Cloud API to the server
-          if (!syncData.settings.whatsappApiUrl || syncData.settings.whatsappApiUrl.includes('SEU_PHONE_NUMBER_ID') || !syncData.settings.whatsappApiToken) {
+          if ((effectiveWhatsAppUrl || effectiveWhatsAppToken) && (!syncData.settings.whatsappApiUrl || !syncData.settings.whatsappApiToken)) {
             apiSaveWhatsAppSettings({
               whatsappApiUrl: effectiveWhatsAppUrl,
               whatsappApiToken: effectiveWhatsAppToken,
@@ -738,8 +743,8 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
           {/* Brand Logo & Name */}
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-rose-600 to-amber-600 text-white flex items-center justify-center shadow-md shadow-rose-200">
-              <UtensilsCrossed className="w-5 h-5" />
+            <div className="w-10 h-10 rounded-2xl text-white flex items-center justify-center shadow-md overflow-hidden" style={{ backgroundColor: settings.primaryColor || '#e11d48' }}>
+              {settings.logoUrl ? <img src={settings.logoUrl} alt={`Logo ${settings.name}`} className="w-full h-full object-cover" /> : <UtensilsCrossed className="w-5 h-5" />}
             </div>
             <div>
               <div className="text-sm sm:text-base font-extrabold text-stone-900 tracking-tight leading-tight flex items-center gap-2">
