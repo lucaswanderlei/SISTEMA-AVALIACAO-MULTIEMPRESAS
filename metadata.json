@@ -1,0 +1,6 @@
+{
+  "name": "Sistema de Avaliação de Restaurante",
+  "description": "Sistema de avaliação via QR Code nas mesas para o restaurante Sr. Coxita com premiação instantânea de brindes, notas de atendimento, ambiente, produtos e tempo de espera.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

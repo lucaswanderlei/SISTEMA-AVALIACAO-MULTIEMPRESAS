@@ -1,0 +1,56 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Reviews and Evaluations collection
+    match /reviews/{reviewId} {
+      allow get: if isValidId(reviewId);
+      allow list: if true;
+      allow create: if isValidId(reviewId)
+        && request.resource.data.id is string
+        && request.resource.data.rewardCode is string;
+      allow update: if isValidId(reviewId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasAny(['rewardClaimed', 'claimedAt', 'claimedTable', 'whatsappStatus', 'whatsappSentAt', 'notified5DaysAt', 'notified1DayAt']);
+      allow delete: if isValidId(reviewId);
+    }
+
+    match /evaluations/{evaluationId} {
+      allow get: if isValidId(evaluationId);
+      allow list: if true;
+      allow create: if isValidId(evaluationId);
+      allow update: if isValidId(evaluationId);
+      allow delete: if isValidId(evaluationId);
+    }
+
+    // Rewards collection
+    match /rewards/{rewardId} {
+      allow read: if true;
+      allow write: if isValidId(rewardId)
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 200;
+    }
+
+    // Waiters collection
+    match /waiters/{waiterId} {
+      allow read: if true;
+      allow write: if isValidId(waiterId)
+        && request.resource.data.name is string
+        && request.resource.data.name.size() <= 150;
+    }
+
+    // Settings collection
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isValidId(settingId);
+    }
+  }
+}

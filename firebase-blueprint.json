@@ -1,0 +1,174 @@
+{
+  "entities": {
+    "review": {
+      "title": "Review",
+      "description": "Customer dining evaluation and reward voucher record",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique evaluation ID"
+        },
+        "tableNumber": {
+          "type": "number",
+          "description": "Table number"
+        },
+        "customerName": {
+          "type": "string",
+          "description": "Customer name"
+        },
+        "customerPhone": {
+          "type": "string",
+          "description": "Customer WhatsApp phone number"
+        },
+        "waiterId": {
+          "type": "string",
+          "description": "ID of waiter evaluated"
+        },
+        "waiterName": {
+          "type": "string",
+          "description": "Name of waiter evaluated"
+        },
+        "rewardCode": {
+          "type": "string",
+          "description": "Voucher prize code"
+        },
+        "rewardTitle": {
+          "type": "string",
+          "description": "Prize title"
+        },
+        "rewardClaimed": {
+          "type": "boolean",
+          "description": "Whether reward coupon has been redeemed in restaurant"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of creation"
+        }
+      },
+      "required": ["id", "rewardCode", "createdAt"]
+    },
+    "reward": {
+      "title": "RewardOption",
+      "description": "Roulette reward prize configuration",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique reward identifier"
+        },
+        "title": {
+          "type": "string",
+          "description": "Name/title of the reward"
+        },
+        "description": {
+          "type": "string",
+          "description": "Reward description"
+        },
+        "category": {
+          "type": "string",
+          "description": "Reward category"
+        },
+        "probabilityWeight": {
+          "type": "number",
+          "description": "RNG probability weight in roulette"
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether this reward can be won"
+        }
+      },
+      "required": ["id", "title", "enabled"]
+    },
+    "waiter": {
+      "title": "Waiter",
+      "description": "Restaurant waiter/attendant profile",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique waiter identifier"
+        },
+        "name": {
+          "type": "string",
+          "description": "Full display name"
+        },
+        "role": {
+          "type": "string",
+          "description": "Staff role"
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Whether waiter is currently active"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of creation"
+        }
+      },
+      "required": ["id", "name", "active"]
+    },
+    "restaurant_settings": {
+      "title": "RestaurantSettings",
+      "description": "Global settings for evaluation system, rewards, and WhatsApp API",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Display name of the establishment"
+        },
+        "tagline": {
+          "type": "string",
+          "description": "Establishment tagline"
+        },
+        "totalTables": {
+          "type": "number",
+          "description": "Number of tables"
+        },
+        "autoSendWhatsApp": {
+          "type": "boolean",
+          "description": "Whether coupon is automatically dispatched via WhatsApp"
+        },
+        "autoSendMode": {
+          "type": "string",
+          "description": "Dispatch mode (silent API or manual redirect)"
+        },
+        "managerPin": {
+          "type": "string",
+          "description": "Access pin to protected manager dashboard"
+        },
+        "whatsappApiUrl": {
+          "type": "string",
+          "description": "Custom WhatsApp Gateway API URL"
+        },
+        "whatsappApiToken": {
+          "type": "string",
+          "description": "Custom WhatsApp Gateway API authorization token"
+        },
+        "whatsappCustomMessage": {
+          "type": "string",
+          "description": "Custom greeting template for WhatsApp"
+        }
+      },
+      "required": ["name", "managerPin"]
+    }
+  },
+  "firestore": {
+    "/reviews/{reviewId}": {
+      "schema": "review",
+      "description": "Customer reviews and evaluations collection"
+    },
+    "/rewards/{rewardId}": {
+      "schema": "reward",
+      "description": "Configurable rewards catalog"
+    },
+    "/waiters/{waiterId}": {
+      "schema": "waiter",
+      "description": "Waiters roster collection"
+    },
+    "/settings/{settingId}": {
+      "schema": "restaurant_settings",
+      "description": "Singleton or per-establishment settings document"
+    }
+  }
+}
