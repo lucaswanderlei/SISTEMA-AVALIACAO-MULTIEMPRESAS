@@ -94,6 +94,7 @@ export default function App() {
   if (typeof window !== 'undefined' && window.location.pathname.replace(/\/$/, '') === '/super-admin') {
     return <SuperAdmin />;
   }
+  const directManagerRoute = typeof window !== 'undefined' && window.location.pathname.replace(/\/$/, '') === '/gerencia';
   const [settings, setSettings] = useState<RestaurantSettings>(loadSettings);
   const [rewards, setRewards] = useState<RewardOption[]>(loadRewards);
   const [reviews, setReviews] = useState<Review[]>(loadReviews);
@@ -110,7 +111,7 @@ export default function App() {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       // If customer is opening via QR link (?cliente=1 or ?origem=qrcode or has mesa)
-      if (params.get('cliente') || params.get('origem') === 'qrcode' || params.get('mesa')) {
+      if (!directManagerRoute && (params.get('cliente') || params.get('origem') === 'qrcode' || params.get('mesa'))) {
         try {
           sessionStorage.removeItem(tenantKey('restaurant_manager_auth'));
         } catch {}
@@ -138,7 +139,7 @@ export default function App() {
     return 0;
   });
 
-  const [activeView, setActiveView] = useState<'customer' | 'qr_display' | 'manager'>('customer');
+  const [activeView, setActiveView] = useState<'customer' | 'qr_display' | 'manager'>(() => directManagerRoute ? 'manager' : 'customer');
   const [notification, setNotification] = useState<string | null>(null);
   const [isFirebaseConnected, setIsFirebaseConnected] = useState<boolean>(true);
 
@@ -154,7 +155,7 @@ export default function App() {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const isClientUrl = params.get('cliente') || params.get('origem') === 'qrcode';
-      const isManagerUrl = params.get('gerencia') === '1';
+      const isManagerUrl = directManagerRoute || params.get('gerencia') === '1';
       const mesaParam = params.get('mesa');
 
       if (isManagerUrl && !isClientUrl) {
@@ -165,7 +166,7 @@ export default function App() {
         if (!authenticated) setShowPinModal(true);
       }
 
-      if (isClientUrl) {
+      if (isClientUrl && !isManagerUrl) {
         // Enforce customer mode when scanning QR code
         setIsManagerLoggedIn(false);
         setActiveView('customer');

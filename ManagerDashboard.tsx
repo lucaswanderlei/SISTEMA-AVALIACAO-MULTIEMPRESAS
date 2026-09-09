@@ -75,7 +75,13 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
   // Tabs within dashboard
   const [activeTab, setActiveTab] = useState<
     'metrics' | 'reviews' | 'customers' | 'waiters' | 'validator' | 'rewards' | 'settings'
-  >('metrics');
+  >(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (window.location.pathname.replace(/\/$/, '') === '/gerencia' || params.get('config') === '1') return 'settings';
+    }
+    return 'metrics';
+  });
 
   // Database Save state
   const [isSavingDb, setIsSavingDb] = useState(false);
