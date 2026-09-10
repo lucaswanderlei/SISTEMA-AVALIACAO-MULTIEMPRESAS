@@ -2470,7 +2470,6 @@ return (
           <div className="space-y-3 p-3 rounded-xl border border-stone-200 bg-stone-50/50">
               <h4 className="text-xs font-black text-stone-800">Texto da página de avaliação</h4>
               <p className="text-[11px] text-stone-500">Cada empresa pode usar sua própria chamada para os clientes.</p>
-            </div>
             <div>
               <label className="block text-xs font-semibold text-stone-700 mb-1">Título</label>
               <input type="text" value={settings.evaluationTitle || 'Como foi sua experiência hoje?'} onChange={(e) => onUpdateSettings({ ...settings, evaluationTitle: e.target.value })} className="w-full text-xs p-2.5 rounded-xl border border-stone-200 focus:border-rose-500 outline-none" />
