@@ -262,17 +262,26 @@ function loadDb(): RestaurantDb {
     reviews: [],
   };
 }
+const postgresSaveQueues = new Map<string, Promise<void>>();
 async function saveDbToPostgres(db: RestaurantDb): Promise<void> {
   const empresaId = currentCompanyId();
-  try {
+  // Snapshot now: later UI/API mutations cannot change what this save represents.
+  const snapshot = JSON.stringify(db);
+  const nome = db.settings?.name || empresaId;
+  const previous = postgresSaveQueues.get(empresaId) || Promise.resolve();
+  const queued = previous.catch(() => {}).then(async () => {
     await pool.query(
       `INSERT INTO avaliacao_empresas (empresa_id, nome, slug, dados, atualizado_em)
        VALUES ($1, $2, $1, $3::jsonb, NOW())
        ON CONFLICT (empresa_id) DO UPDATE SET dados=EXCLUDED.dados, nome=EXCLUDED.nome, atualizado_em=NOW()`,
-      [empresaId, db.settings?.name || empresaId, JSON.stringify(db)]
+      [empresaId, nome, snapshot]
     );
     console.log(`[PostgreSQL] Dados da empresa ${empresaId} salvos.`);
-  } catch (error) { console.error('[PostgreSQL] Erro ao salvar dados multiempresa:', error); }
+  }).catch((error) => {
+    console.error('[PostgreSQL] Erro ao salvar dados multiempresa:', error);
+  });
+  postgresSaveQueues.set(empresaId, queued);
+  await queued;
 }
 function saveDb(db: RestaurantDb): void {
   try {
@@ -747,11 +756,11 @@ if (!carregouPostgres) {
         activeDb.settings = { ...activeDb.settings, ...safeSettings };
         changed = true;
       }
-      if (Array.isArray(rewards) && rewards.length > 0) {
+      if (Array.isArray(rewards)) {
         activeDb.rewards = rewards;
         changed = true;
       }
-      if (Array.isArray(waiters) && waiters.length > 0) {
+      if (Array.isArray(waiters)) {
         activeDb.waiters = waiters;
         changed = true;
       }
