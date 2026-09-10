@@ -49,6 +49,11 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
   waiters = [],
   onSubmitReview,
 }) => {
+  const quickTagsOptions = (settings.quickTagsOptions || [])
+    .map((tag) => String(tag || '').trim())
+    .filter(Boolean);
+  const visibleQuickTags = quickTagsOptions.length > 0 ? quickTagsOptions : QUICK_TAGS_OPTIONS;
+
   // Table Selection State
   const [selectedTable, setSelectedTable] = useState<number>(tableNumber && tableNumber > 0 ? tableNumber : 0);
   const [isBalcao, setIsBalcao] = useState<boolean>(false);
@@ -672,7 +677,7 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
               Marque o que mais chamou sua atenção durante a refeição:
             </p>
             <div className="flex flex-wrap gap-2">
-              {QUICK_TAGS_OPTIONS.map((tag) => {
+              {visibleQuickTags.map((tag) => {
                 const isSelected = selectedTags.includes(tag);
                 return (
                   <button

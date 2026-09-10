@@ -41,6 +41,7 @@ import { RestaurantSettings, RewardOption, Review, Waiter } from '../types';
 import { CustomerDatabaseView } from './CustomerDatabaseView';
 import { apiUpdatePin } from '../lib/api';
 import { RatingChoiceIcon } from './RatingChoiceIcon';
+import { QUICK_TAGS_OPTIONS } from '../data/mockData';
 import type { RatingIconType } from '../types';
 
 interface ManagerDashboardProps {
@@ -82,6 +83,30 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
     }
     return 'metrics';
   });
+
+  const quickTagsOptions =
+    settings.quickTagsOptions && settings.quickTagsOptions.length > 0
+      ? settings.quickTagsOptions
+      : QUICK_TAGS_OPTIONS;
+
+  const updateQuickTag = (index: number, value: string) => {
+    const next = [...quickTagsOptions];
+    next[index] = value;
+    onUpdateSettings({ ...settings, quickTagsOptions: next });
+  };
+
+  const removeQuickTag = (index: number) => {
+    const next = quickTagsOptions.filter((_, i) => i !== index);
+    onUpdateSettings({ ...settings, quickTagsOptions: next });
+  };
+
+  const addQuickTag = () => {
+    if (quickTagsOptions.length >= 20) return;
+    onUpdateSettings({
+      ...settings,
+      quickTagsOptions: [...quickTagsOptions, `Novo destaque ${quickTagsOptions.length + 1}`],
+    });
+  };
 
   // Database Save state
   const [isSavingDb, setIsSavingDb] = useState(false);
@@ -2449,6 +2474,53 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
                 );
               })}
             </div>
+          </div>
+
+          <div className="rounded-2xl border border-stone-200 bg-stone-50/70 p-4">
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div>
+                <label className="block text-xs font-bold text-stone-800">Destaques Rápidos</label>
+                <p className="text-[11px] text-stone-500 mt-1">
+                  Edite as opções que aparecem para o cliente tocar durante a avaliação.
+                </p>
+              </div>
+              <span className="text-[10px] font-semibold text-stone-500 bg-white border border-stone-200 rounded-full px-2 py-1 whitespace-nowrap">
+                {quickTagsOptions.length}/20
+              </span>
+            </div>
+
+            <div className="space-y-2">
+              {quickTagsOptions.map((tag, index) => (
+                <div key={index} className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={tag}
+                    maxLength={60}
+                    onChange={(e) => updateQuickTag(index, e.target.value)}
+                    className="flex-1 text-xs p-2.5 rounded-xl border border-stone-200 bg-white focus:border-rose-500 outline-none"
+                    placeholder={`Destaque ${index + 1}`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeQuickTag(index)}
+                    className="shrink-0 w-9 h-9 rounded-xl border border-stone-200 bg-white text-stone-400 hover:text-red-600 hover:border-red-200 hover:bg-red-50 transition"
+                    title="Excluir destaque"
+                  >
+                    <Trash2 className="w-4 h-4 mx-auto" />
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={addQuickTag}
+              disabled={quickTagsOptions.length >= 20}
+              className="mt-3 inline-flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold border border-rose-200 text-rose-700 bg-rose-50 hover:bg-rose-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+            >
+              <Plus className="w-4 h-4" />
+              Adicionar destaque
+            </button>
           </div>
 
           <div>
