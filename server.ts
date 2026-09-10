@@ -284,31 +284,35 @@ async function saveDbToPostgres(db: RestaurantDb): Promise<void> {
   try {
     await queued;
   } finally {
-    if (postgresSaveQueues.get(empresaId) === queued) postgresSaveQueues.delete(empresaId);
+    if (postgresSaveQueues.get(empresaId) === queued) {
+      postgresSaveQueues.delete(empresaId);
+    }
   }
 }
 function saveDb(db: RestaurantDb): void {
-  try {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
-    }
-    const content = JSON.stringify(db, null, 2);
-    fs.writeFileSync(DB_FILE, content, 'utf-8');
+  // Em produção (Render), o disco local é efêmero. PostgreSQL é a fonte de verdade.
+  if (process.env.NODE_ENV !== 'production') {
     try {
-      fs.writeFileSync(DB_BACKUP_FILE, content, 'utf-8');
-    } catch {}
-    console.log(`[Database] Salvo com sucesso (${db.rewards.length} brindes, ${db.waiters.length} garçons, ${db.reviews.length} avaliações)`);
-    void saveDbToPostgres(db);
-  } catch (err) {
-    console.error('Error writing DB_FILE:', err);
+      if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+      const content = JSON.stringify(db, null, 2);
+      fs.writeFileSync(DB_FILE, content, 'utf-8');
+      try { fs.writeFileSync(DB_BACKUP_FILE, content, 'utf-8'); } catch {}
+    } catch (err) {
+      console.warn('[Database] Falha ao gravar cópia local de desenvolvimento:', err);
+    }
   }
+
+  void saveDbToPostgres(db).catch((err) => {
+    console.error('[PostgreSQL] Falha ao persistir alteração:', err);
+  });
 }
 
 // Multiempresa: cada requisição trabalha em um banco isolado pelo X-Company-Id.
 const tenantContext = new AsyncLocalStorage<{ companyId: string }>();
 const tenantDbs = new Map<string, RestaurantDb>();
+// O arquivo JSON empacotado NÃO deve virar estado ativo após um deploy.
+// Ele serve apenas para uma eventual migração inicial se o PostgreSQL estiver vazio.
 const legacySeed = loadDb();
-tenantDbs.set('demo', legacySeed);
 
 function normalizeCompanyId(value: unknown): string {
   const clean = String(value || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
@@ -352,19 +356,42 @@ async function loadCompanyDb(companyId: string): Promise<RestaurantDb> {
   const db = freshDb(); tenantDbs.set(companyId, db); return db;
 }
 const activeDb = new Proxy({} as RestaurantDb, {
-  get(_target, prop) { return (tenantDbs.get(currentCompanyId()) || legacySeed as any)[prop as keyof RestaurantDb]; },
+  get(_target, prop) {
+    const id = currentCompanyId();
+    let db = tenantDbs.get(id);
+    if (!db) {
+      db = freshDb();
+      tenantDbs.set(id, db);
+    }
+    return db[prop as keyof RestaurantDb];
+  },
   set(_target, prop, value) { const id=currentCompanyId(); const db=tenantDbs.get(id) || freshDb(); (db as any)[prop]=value; tenantDbs.set(id, db); return true; }
 });
 
-async function loadDbFromPostgres(): Promise<boolean> {
+async function loadAllCompaniesFromPostgres(): Promise<number> {
   try {
-    const result = await pool.query('SELECT dados FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1', ['demo']);
-    if (!result.rows[0]?.dados) return false;
-    const parsed=result.rows[0].dados;
-    tenantDbs.set('demo', { settings:{...DEFAULT_SETTINGS,...(parsed.settings||{})}, rewards:Array.isArray(parsed.rewards)?parsed.rewards:DEFAULT_REWARDS, waiters:Array.isArray(parsed.waiters)?parsed.waiters:DEFAULT_WAITERS, reviews:Array.isArray(parsed.reviews)?parsed.reviews:[] });
-    return true;
-  } catch (e) { console.error('[PostgreSQL] Erro ao carregar demo:', e); return false; }
+    const result = await pool.query(
+      'SELECT empresa_id, dados FROM avaliacao_empresas WHERE ativo=TRUE'
+    );
+
+    for (const row of result.rows) {
+      const parsed = row.dados || {};
+      tenantDbs.set(row.empresa_id, {
+        settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) },
+        rewards: Array.isArray(parsed.rewards) ? parsed.rewards : [],
+        waiters: Array.isArray(parsed.waiters) ? parsed.waiters : [],
+        reviews: Array.isArray(parsed.reviews) ? parsed.reviews : [],
+      });
+    }
+
+    console.log(`[PostgreSQL] ${result.rows.length} empresa(s) carregada(s) do banco no boot.`);
+    return result.rows.length;
+  } catch (e) {
+    console.error('[PostgreSQL] Erro ao carregar empresas no boot:', e);
+    throw e;
+  }
 }
+
 interface WhatsAppDispatch {
   id: string;
   phone: string;
@@ -412,11 +439,16 @@ async function startServer() {
  // Inicializa e carrega o banco PostgreSQL antes de iniciar o sistema
 await initPostgres();
 
-const carregouPostgres = await loadDbFromPostgres();
+const totalEmpresas = await loadAllCompaniesFromPostgres();
 
-if (!carregouPostgres) {
-  console.log('[PostgreSQL] Primeiro uso: migrando os dados atuais para o PostgreSQL...');
-  await saveDbToPostgres(activeDb);
+// Migração inicial somente se o banco estiver realmente vazio.
+// Em deploys posteriores, NUNCA regrava padrões por cima do PostgreSQL.
+if (totalEmpresas === 0) {
+  console.log('[PostgreSQL] Banco vazio: criando somente o registro inicial demo.');
+  tenantDbs.set('demo', legacySeed);
+  await tenantContext.run({ companyId: 'demo' }, async () => {
+    await saveDbToPostgres(legacySeed);
+  });
 }
 
 
@@ -430,7 +462,6 @@ if (!carregouPostgres) {
   const PORT = process.env.NODE_ENV === 'production' ? 3000 : 3001;
 
   app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
   // Administração geral multiempresa. Proteja com SUPER_ADMIN_KEY no Render.
   function requireSuperAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
@@ -705,9 +736,11 @@ if (!carregouPostgres) {
     try {
       const companyId = currentCompanyId();
       const current = tenantDbs.get(companyId) || freshDb();
-      const incoming = req.body && typeof req.body === 'object' ? req.body : {};
 
-      current.settings = { ...current.settings, ...incoming };
+      current.settings = {
+        ...current.settings,
+        ...(req.body || {}),
+      };
       tenantDbs.set(companyId, current);
 
       await saveDbToPostgres(current);
@@ -716,23 +749,30 @@ if (!carregouPostgres) {
         'SELECT dados FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1',
         [companyId]
       );
-      const persistedSettings = check.rows[0]?.dados?.settings || current.settings;
 
-      tenantDbs.set(companyId, {
-        ...current,
-        settings: { ...DEFAULT_SETTINGS, ...persistedSettings },
+      const persistedSettings = check.rows[0]?.dados?.settings;
+      if (!persistedSettings) {
+        throw new Error('O PostgreSQL não retornou as configurações após salvar.');
+      }
+
+      current.settings = { ...DEFAULT_SETTINGS, ...persistedSettings };
+      tenantDbs.set(companyId, current);
+
+      return res.json({
+        success: true,
+        persisted: true,
+        settings: current.settings,
       });
-
-      return res.json({ success: true, settings: persistedSettings, persisted: true });
     } catch (err: any) {
-      console.error('[Settings] Falha de persistência:', err);
+      console.error('[Settings] Erro ao persistir configurações:', err);
       return res.status(500).json({
         success: false,
-        error: err?.message || 'Erro ao salvar configurações no PostgreSQL.',
+        error: err?.message || 'Erro ao salvar configurações.',
       });
     }
   });
 
+  // Dedicated PIN Update Endpoint
   app.post('/api/settings/pin', (req, res) => {
     try {
       const { pin } = req.body || {};
@@ -819,7 +859,7 @@ if (!carregouPostgres) {
   });
 
   // Full Database Sync Push (Saves rewards, waiters, settings, reviews atomically)
-  app.post('/api/sync/push', async (req, res) => {
+  app.post('/api/sync/push', (req, res) => {
     try {
       const { settings, rewards, waiters, reviews } = req.body || {};
       let changed = false;
@@ -856,7 +896,7 @@ if (!carregouPostgres) {
       }
 
       if (changed) {
-        await saveDbToPostgres(activeDb);
+        saveDb(activeDb);
       }
 
       return res.json({
