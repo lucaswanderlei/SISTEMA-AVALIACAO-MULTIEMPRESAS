@@ -454,6 +454,64 @@ if (!carregouPostgres) {
     res.json({success:true, empresaId:id, ativo});
   });
 
+
+  app.patch('/api/admin/companies/:id', requireSuperAdmin, async (req, res) => {
+    const id = normalizeCompanyId(req.params.id);
+    const nome = String(req.body?.nome || req.body?.name || '').trim();
+    if (!nome) return res.status(400).json({ error: 'Informe um nome válido.' });
+
+    const result = await pool.query('SELECT dados FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1', [id]);
+    if (!result.rows[0]) return res.status(404).json({ error: 'Empresa não encontrada.' });
+
+    const dados = result.rows[0].dados || freshDb();
+    dados.settings = { ...DEFAULT_SETTINGS, ...(dados.settings || {}), name: nome };
+
+    await pool.query(
+      'UPDATE avaliacao_empresas SET nome=$2, dados=$3::jsonb, atualizado_em=NOW() WHERE empresa_id=$1',
+      [id, nome, JSON.stringify(dados)]
+    );
+
+    const cached = tenantDbs.get(id);
+    if (cached) {
+      cached.settings = { ...cached.settings, name: nome };
+      tenantDbs.set(id, cached);
+    }
+
+    res.json({ success: true, empresaId: id, nome });
+  });
+
+  app.delete('/api/admin/companies/:id', requireSuperAdmin, async (req, res) => {
+    const id = normalizeCompanyId(req.params.id);
+
+    if (id === 'demo') {
+      return res.status(400).json({
+        error: 'A empresa demo é o registro técnico padrão e não pode ser excluída. Você pode renomeá-la ou desativá-la.'
+      });
+    }
+
+    const exists = await pool.query(
+      'SELECT empresa_id FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1',
+      [id]
+    );
+    if (!exists.rows[0]) return res.status(404).json({ error: 'Empresa não encontrada.' });
+
+    try {
+      const snap = await getDocs(collection(firestoreDb, 'companies', id, 'reviews'));
+      const removals: Promise<void>[] = [];
+      snap.forEach((item) => {
+        removals.push(deleteDoc(doc(firestoreDb, 'companies', id, 'reviews', item.id)));
+      });
+      await Promise.all(removals);
+    } catch (error) {
+      console.warn(`[SuperAdmin] Não foi possível limpar totalmente o Firestore da empresa ${id}:`, error);
+    }
+
+    await pool.query('DELETE FROM avaliacao_empresas WHERE empresa_id=$1', [id]);
+    tenantDbs.delete(id);
+
+    res.json({ success: true, empresaId: id });
+  });
+
   // API Routes FIRST
   app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
