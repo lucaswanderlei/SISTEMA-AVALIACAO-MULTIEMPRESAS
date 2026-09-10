@@ -57,14 +57,11 @@ import {
 } from './lib/api';
 import {
   testFirestoreConnection,
-  firestoreSaveReview,
   firestoreSaveRewards,
   firestoreSaveWaiters,
   firestoreSaveSettings,
   firestoreFetchSettings,
   firestoreDeleteReview,
-  firestoreFetchReviews,
-  subscribeToReviews,
 } from './lib/firebase';
 import { CustomerEvaluation } from './components/CustomerEvaluation';
 import { TableQrDisplay } from './components/TableQrDisplay';
@@ -329,69 +326,11 @@ export default function App() {
         setIsFirebaseConnected(false);
       });
 
-    // A. Fetch all reviews from Firestore on mount
-    firestoreFetchReviews()
-      .then((fsReviews) => {
-        if (!isMounted || !fsReviews || fsReviews.length === 0) return;
-        setReviews((prev) => {
-          const map = new Map<string, Review>();
-          prev.forEach((r) => {
-            if (!deletedReviewIdsRef.current.has(r.id)) {
-              map.set(r.id, r);
-            }
-          });
-          fsReviews.forEach((r) => {
-            if (!deletedReviewIdsRef.current.has(r.id)) {
-              map.set(r.id, r);
-            }
-          });
-          const merged = Array.from(map.values()).sort(
-            (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-          );
-          saveReviews(merged);
-          merged.forEach((r) => knownReviewIdsRef.current.add(r.id));
-          return merged;
-        });
-      })
-      .catch((err) => {
-        console.warn('[Firebase] Initial reviews fetch warning:', err);
-      });
-
-    // B. Real-time Firestore subscription (onSnapshot)
-    const unsubscribeFirestore = subscribeToReviews((fsReviews) => {
-      if (!isMounted || !fsReviews || !Array.isArray(fsReviews)) return;
-      const cleanFsReviews = fsReviews.filter((r) => !deletedReviewIdsRef.current.has(r.id));
-
-      // Check for new customer reviews
-      const newReviews = cleanFsReviews.filter((r) => !knownReviewIdsRef.current.has(r.id));
-      if (newReviews.length > 0) {
-        newReviews.forEach((r) => knownReviewIdsRef.current.add(r.id));
-        const latest = newReviews[0];
-        const tableStr = latest.tableNumber ? `Mesa #${latest.tableNumber}` : 'Salão';
-        const customerStr = latest.customerName || 'Cliente';
-        showToast(`🔔 Nova avaliação recebida em tempo real da ${tableStr}! (${latest.ratings?.service || 5}★ de ${customerStr})`);
-        playChimeSound();
-      }
-
-      setReviews((prev) => {
-        const filteredPrev = prev.filter((r) => !deletedReviewIdsRef.current.has(r.id));
-        const map = new Map<string, Review>();
-        filteredPrev.forEach((r) => map.set(r.id, r));
-        cleanFsReviews.forEach((r) => map.set(r.id, r));
-        const merged = Array.from(map.values()).sort(
-          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
-        if (JSON.stringify(prev) !== JSON.stringify(merged)) {
-          saveReviews(merged);
-          return merged;
-        }
-        return prev;
-      });
-    });
+    // Reviews are persisted and synchronized exclusively by the central server/PostgreSQL.
+    // Firestore remains available for the legacy/settings integration only.
 
     return () => {
       isMounted = false;
-      unsubscribeFirestore();
     };
   }, []);
 
@@ -597,13 +536,6 @@ export default function App() {
       console.warn('Central server sync notice:', err);
     }
 
-    // Synchronize with Firebase Firestore
-    try {
-      await firestoreSaveReview(newReview);
-    } catch (err) {
-      console.warn('Firestore review save notice:', err);
-    }
-
     // Redundant atomic push to server
     apiSyncPush({ reviews: updated }).catch(() => {});
 
@@ -655,9 +587,8 @@ export default function App() {
       };
       handleReviewsChange(updated);
 
-      // Validate on central server & Firebase Firestore
+      // Validate on central server/PostgreSQL
       apiValidateReward(normalized, tableUsed).catch(() => {});
-      firestoreSaveReview(updated[index]).catch(() => {});
       apiSyncPush({ reviews: updated }).catch(() => {});
 
       showToast(
@@ -674,7 +605,6 @@ export default function App() {
       if (serverResult.success && serverResult.review) {
         const updated = [serverResult.review, ...reviews.filter((r) => r.id !== serverResult.review!.id)];
         handleReviewsChange(updated);
-        firestoreSaveReview(serverResult.review).catch(() => {});
         showToast(`✅ Brinde validado no sistema central com sucesso!`);
         return true;
       } else if (serverResult.error) {
