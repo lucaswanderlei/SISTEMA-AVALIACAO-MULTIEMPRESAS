@@ -15,64 +15,28 @@ const SvgBase: React.FC<React.SVGProps<SVGSVGElement>> = ({ children, ...props }
   </svg>
 );
 
-// Brigadeiro: formato clássico de docinho redondo em forminha, com granulado.
+// Brigadeiro: modelo clássico com granulado e forminha canelada.
 const BrigadeiroIcon: React.FC<{ filled?: boolean; className?: string }> = ({ filled, className }) => (
   <SvgBase className={className}>
-    <path
-      d="M8.2 24.2c2.7 1.8 6 2.7 9.8 2.7s7.1-.9 9.8-2.7l-2.3 7H10.5l-2.3-7Z"
-      fill={filled ? 'currentColor' : 'none'}
-      stroke="currentColor"
-      strokeWidth="1.7"
-      strokeLinejoin="round"
-    />
-    <path
-      d="M10.2 24.6 7 22.4M25.8 24.6l3.2-2.2M13.3 26.1l-.8 4.4M18 26.8v4.4M22.7 26.1l.8 4.4"
-      stroke={filled ? 'white' : 'currentColor'}
-      strokeWidth="1.15"
-      strokeLinecap="round"
-      opacity=".75"
-    />
-    <circle cx="18" cy="15.8" r="9.2" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.8" />
-    <g stroke={filled ? 'white' : 'currentColor'} strokeWidth="1.35" strokeLinecap="round" opacity=".9">
-      <path d="m12.4 12.2 2 1"/><path d="m17.2 9.7.8 2"/><path d="m21.9 11.7 1.8-1"/>
-      <path d="m11.5 16.5 2.1-.5"/><path d="m16.5 15.2 1.7 1.2"/><path d="m21.8 16.1 2 .7"/>
-      <path d="m13.2 20 1.5 1.3"/><path d="m18.2 20.7 1.7-1.1"/><path d="m22.4 20.1 1.5.3"/>
+    <path d="M6.2 18.2C6.2 10.8 11.4 5.4 18 5.4s11.8 5.4 11.8 12.8" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+    <g stroke={filled ? 'white' : 'currentColor'} strokeWidth="1.8" strokeLinecap="round">
+      <path d="m11 11.5 1.8 1.2"/><path d="m15.8 9.3 1.8-.2"/><path d="m21.2 9.5.5 1.9"/><path d="m24.8 12.3 1.6-1.2"/>
+      <path d="m9.4 15.5 1.5-1.4"/><path d="m14.2 15.4 2-.2"/><path d="m19.3 13.8 1 2"/><path d="m24.3 15.8 1.1-1.8"/>
     </g>
+    <path d="M5.2 18.2c2.1-.9 4.2-.8 6.2.5 2.2-1.4 4.4-1.4 6.6 0 2.2-1.4 4.4-1.4 6.6 0 2-1.3 4.1-1.4 6.2-.5L26.6 31H9.4L5.2 18.2Z" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round"/>
+    <path d="m10.2 20.7 3.2 10.1M18 20.5V31M25.8 20.7l-3.2 10.1" stroke={filled ? 'white' : 'currentColor'} strokeWidth="1.8" strokeLinecap="round"/>
   </SvgBase>
 );
 
-// Bolo: fatia triangular reconhecível, com camadas, recheio, cobertura e cereja.
+// Bolo: fatia lateral com cobertura, camadas e cereja.
 const CakeSliceIcon: React.FC<{ filled?: boolean; className?: string }> = ({ filled, className }) => (
   <SvgBase className={className}>
-    <path
-      d="M5.8 27.8 10.2 11l19.5 7.1-4.1 11.2H7.2c-.9 0-1.6-.7-1.4-1.5Z"
-      fill={filled ? 'currentColor' : 'none'}
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinejoin="round"
-    />
-    <path
-      d="m10.2 11 19.5 7.1"
-      stroke="currentColor"
-      strokeWidth="2.4"
-      strokeLinecap="round"
-    />
-    <path
-      d="m8.2 20.1 19 6.2"
-      stroke={filled ? 'white' : 'currentColor'}
-      strokeWidth="1.45"
-      strokeLinecap="round"
-      opacity=".9"
-    />
-    <path
-      d="M9.2 16.1c1.5 1.3 2.8 1.5 4.1.6 1.2 1.5 2.6 1.8 4.1.7 1.2 1.5 2.7 1.8 4.2.7 1.1 1.4 2.4 1.7 3.9.9"
-      stroke={filled ? 'white' : 'currentColor'}
-      strokeWidth="1.15"
-      strokeLinecap="round"
-      opacity=".85"
-    />
-    <path d="M17.2 13.4c.3-3.1 1.7-5.1 4.3-6.1" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round" />
-    <circle cx="22.1" cy="6.6" r="2.2" fill="currentColor" />
+    <path d="M4.5 16.8 26.8 8.5 32 16.8H4.5Z" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2.1" strokeLinejoin="round"/>
+    <path d="M4.5 16.8H32v14H4.5v-14Z" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2.1" strokeLinejoin="round"/>
+    <path d="M4.8 20.4c1.5 2 3.1 2 4.6 0 1.5 2 3.1 2 4.6 0 1.5 2 3.1 2 4.6 0 1.5 2 3.1 2 4.6 0 1.5 2 3.1 2 4.6 0 1.3 1.7 2.7 1.9 4.1.5" stroke={filled ? 'white' : 'currentColor'} strokeWidth="1.7" strokeLinecap="round" fill="none"/>
+    <path d="M4.8 27.2h26.9" stroke={filled ? 'white' : 'currentColor'} strokeWidth="1.8"/>
+    <circle cx="26.2" cy="8.3" r="3.1" fill={filled ? 'white' : 'none'} stroke="currentColor" strokeWidth="2"/>
+    <path d="M25 5.5c-.5-2.5-2-3.8-4.5-4.2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
   </SvgBase>
 );
 
