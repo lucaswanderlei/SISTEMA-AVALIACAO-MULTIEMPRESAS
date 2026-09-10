@@ -66,6 +66,7 @@ export interface RestaurantSettings {
   ratingIcon?: RatingIconType;
   evaluationTitle?: string;
   evaluationDescription?: string;
+  quickTagsOptions?: string[]; // Destaques rápidos personalizáveis por empresa
   totalTables: number;
   activeRewardMode: 'wheel' | 'fixed'; // Gira roleta ou ganha brinde fixo
   fixedRewardId: string;
