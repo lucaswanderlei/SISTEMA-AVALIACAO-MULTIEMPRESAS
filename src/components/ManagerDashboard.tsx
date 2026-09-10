@@ -2487,13 +2487,14 @@ return (
             <p className="text-[11px] text-stone-400 mb-3">
               Escolha o símbolo que seus clientes tocarão para dar as notas.
             </p>
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
               {([
                 ['star', 'Estrelas'],
                 ['coxinha', 'Coxinhas'],
                 ['brigadeiro', 'Brigadeiros'],
                 ['cake', 'Fatias de bolo'],
                 ['pizza', 'Fatias de pizza'],
+                ['icecream', 'Sorvete'],
               ] as [RatingIconType, string][]).map(([value, label]) => {
                 const selected = (settings.ratingIcon || 'coxinha') === value;
                 return (

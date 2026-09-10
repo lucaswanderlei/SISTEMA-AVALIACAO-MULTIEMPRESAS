@@ -40,6 +40,16 @@ const CakeSliceIcon: React.FC<{ filled?: boolean; className?: string }> = ({ fil
   </SvgBase>
 );
 
+
+const IceCreamIcon: React.FC<{ filled?: boolean; className?: string }> = ({ filled, className }) => (
+  <SvgBase className={className}>
+    <path d="M10.5 17c-2.3-.7-3.9-2.8-3.9-5.2 0-3 2.4-5.4 5.4-5.4.7 0 1.4.1 2 .4C15 4.5 17.2 3 19.8 3c3.5 0 6.4 2.7 6.6 6.2 2.1.6 3.6 2.5 3.6 4.8 0 2.8-2.2 5-5 5H12c-2.8 0-5-2.2-5-5 0-1.8 1-3.5 2.5-4.4"
+      fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    <path d="M11.5 19 18 33l6.5-14H11.5Z" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+    <path d="m14.2 22.2 7.3 5.8M21.8 22.2l-6.3 5" stroke={filled ? 'white' : 'currentColor'} strokeWidth="1.4" strokeLinecap="round"/>
+  </SvgBase>
+);
+
 const PizzaSliceIcon: React.FC<{ filled?: boolean; className?: string }> = ({ filled, className }) => (
   <SvgBase className={className}>
     <path d="M6 8.5c8-2.7 16-2.7 24 0L18 31 6 8.5Z" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
@@ -54,5 +64,6 @@ export const RatingChoiceIcon: React.FC<RatingChoiceIconProps> = ({ type = 'coxi
   if (type === 'brigadeiro') return <BrigadeiroIcon filled={filled} className={className} />;
   if (type === 'cake') return <CakeSliceIcon filled={filled} className={className} />;
   if (type === 'pizza') return <PizzaSliceIcon filled={filled} className={className} />;
+  if (type === 'icecream') return <IceCreamIcon filled={filled} className={className} />;
   return <CoxinhaIcon filled={filled} className={className} />;
 };
