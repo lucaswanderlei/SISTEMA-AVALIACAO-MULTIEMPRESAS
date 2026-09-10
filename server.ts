@@ -411,28 +411,8 @@ const processedWebhookIds = new Set<string>();
 const MAX_WEBHOOK_CACHE = 500;
 
 async function syncFirestoreToActiveDb(): Promise<void> {
-  try {
-    const snap = await getDocs(collection(firestoreDb, 'companies', currentCompanyId(), 'reviews'));
-    if (snap && snap.size > 0) {
-      const fsReviews: any[] = [];
-      snap.forEach((d) => {
-        const data = d.data();
-        if (data && data.id) {
-          fsReviews.push(data);
-        }
-      });
-      const reviewMap = new Map<string, any>();
-      activeDb.reviews.forEach((r: any) => reviewMap.set(r.id, r));
-      fsReviews.forEach((r: any) => reviewMap.set(r.id, r));
-      activeDb.reviews = Array.from(reviewMap.values()).sort(
-        (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      );
-      saveDb(activeDb);
-      console.log(`[Firestore Sync] ${fsReviews.length} avaliações sincronizadas do Firestore com sucesso!`);
-    }
-  } catch (err) {
-    console.warn('[Firestore Sync] Aviso ao carregar avaliações do Firestore:', err);
-  }
+  // Desativado: PostgreSQL é a única fonte de verdade.
+  return;
 }
 
 async function startServer() {
@@ -531,17 +511,6 @@ if (totalEmpresas === 0) {
     );
     if (!exists.rows[0]) return res.status(404).json({ error: 'Empresa não encontrada.' });
 
-    try {
-      const snap = await getDocs(collection(firestoreDb, 'companies', id, 'reviews'));
-      const removals: Promise<void>[] = [];
-      snap.forEach((item) => {
-        removals.push(deleteDoc(doc(firestoreDb, 'companies', id, 'reviews', item.id)));
-      });
-      await Promise.all(removals);
-    } catch (error) {
-      console.warn(`[SuperAdmin] Não foi possível limpar totalmente o Firestore da empresa ${id}:`, error);
-    }
-
     await pool.query('DELETE FROM avaliacao_empresas WHERE empresa_id=$1', [id]);
     tenantDbs.delete(id);
 
@@ -593,14 +562,6 @@ if (totalEmpresas === 0) {
 
       saveDb(activeDb);
       console.log(`[Central Sync] Nova avaliação sincronizada! Mesa #${review.tableNumber || 'Salão'} • Cliente: ${review.customerName || 'Anônimo'} • Código: ${review.rewardCode}`);
-
-      // Persist to Firestore
-      try {
-        const cleaned = sanitizeObj(review);
-        await setDoc(doc(firestoreDb, 'companies', currentCompanyId(), 'reviews', review.id), cleaned, { merge: true });
-      } catch (fErr) {
-        console.warn('[Firestore Sync] Aviso ao salvar review no Firestore:', fErr);
-      }
 
       return res.json({
         success: true,
@@ -685,14 +646,6 @@ if (totalEmpresas === 0) {
       saveDb(activeDb);
       console.log(`[Central Sync] Avaliação ${id} removida do servidor. Antes: ${beforeCount}, Agora: ${activeDb.reviews.length}`);
 
-      // Delete from Firestore directly
-      try {
-        await deleteDoc(doc(firestoreDb, 'companies', currentCompanyId(), 'reviews', id));
-        console.log(`[Firestore Sync] Avaliação ${id} excluída do Firestore.`);
-      } catch (fErr) {
-        console.warn(`[Firestore Sync] Aviso ao excluir review ${id} do Firestore:`, fErr);
-      }
-
       return res.json({
         success: true,
         deletedId: id,
@@ -711,19 +664,6 @@ if (totalEmpresas === 0) {
       activeDb.reviews = [];
       saveDb(activeDb);
       console.log('[Central Sync] Todas as avaliações foram limpas do servidor.');
-
-      // Also delete from Firestore
-      try {
-        const snap = await getDocs(collection(firestoreDb, 'companies', currentCompanyId(), 'reviews'));
-        const deletePromises: Promise<any>[] = [];
-        snap.forEach((d) => {
-          deletePromises.push(deleteDoc(d.ref));
-        });
-        await Promise.all(deletePromises);
-        console.log(`[Firestore Sync] Todas as ${deletePromises.length} avaliações foram limpas do Firestore.`);
-      } catch (fErr) {
-        console.warn('[Firestore Sync] Aviso ao limpar avaliações do Firestore:', fErr);
-      }
 
       return res.json({ success: true, reviews: [] });
     } catch (err: any) {
@@ -837,7 +777,7 @@ if (totalEmpresas === 0) {
     try {
       if (Array.isArray(req.body)) {
         activeDb.rewards = req.body;
-        saveDb(activeDb);
+        await saveDbToPostgres(activeDb);
       }
       return res.json({ success: true, rewards: activeDb.rewards });
     } catch (err: any) {
@@ -850,7 +790,7 @@ if (totalEmpresas === 0) {
     try {
       if (Array.isArray(req.body)) {
         activeDb.waiters = req.body;
-        saveDb(activeDb);
+        await saveDbToPostgres(activeDb);
       }
       return res.json({ success: true, waiters: activeDb.waiters });
     } catch (err: any) {
@@ -859,7 +799,7 @@ if (totalEmpresas === 0) {
   });
 
   // Full Database Sync Push (Saves rewards, waiters, settings, reviews atomically)
-  app.post('/api/sync/push', (req, res) => {
+  app.post('/api/sync/push', async (req, res) => {
     try {
       const { settings, rewards, waiters, reviews } = req.body || {};
       let changed = false;
@@ -896,7 +836,7 @@ if (totalEmpresas === 0) {
       }
 
       if (changed) {
-        saveDb(activeDb);
+        await saveDbToPostgres(activeDb);
       }
 
       return res.json({
@@ -1335,10 +1275,6 @@ Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos voc
         rev.notified1DayAt = new Date().toISOString();
         hasChanges = true;
         sent1DayCount++;
-
-        try {
-          await setDoc(doc(firestoreDb, 'companies', currentCompanyId(), 'reviews', rev.id), { notified1DayAt: rev.notified1DayAt }, { merge: true });
-        } catch {}
       }
       // Case 2: 5 Days left (Faltando 5 dias ou entre 2 e 5 dias)
       else if ((daysLeft <= 5 || forceType === '5_days') && (forceType === '5_days' || !rev.notified5DaysAt)) {
@@ -1366,10 +1302,6 @@ Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos voc
         rev.notified5DaysAt = new Date().toISOString();
         hasChanges = true;
         sent5DaysCount++;
-
-        try {
-          await setDoc(doc(firestoreDb, 'companies', currentCompanyId(), 'reviews', rev.id), { notified5DaysAt: rev.notified5DaysAt }, { merge: true });
-        } catch {}
       }
     }
 
@@ -1675,13 +1607,6 @@ Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos voc
               review.whatsappStatus = 'delivered';
               review.whatsappSentAt = new Date().toISOString();
               saveDb(activeDb);
-              try {
-                await setDoc(doc(firestoreDb, 'companies', currentCompanyId(), 'reviews', review.id), {
-                  rewardSentViaWhatsapp: true,
-                  whatsappStatus: 'delivered',
-                  whatsappSentAt: review.whatsappSentAt,
-                }, { merge: true });
-              } catch {}
 
               const record: WhatsAppDispatch = {
                 id: `disp_webhook_${Date.now()}`,
