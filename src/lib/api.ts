@@ -89,7 +89,13 @@ export async function apiSaveSettings(settings: RestaurantSettings): Promise<boo
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),
     });
-    return res.ok;
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.error('[Sync API] Servidor recusou salvar configurações:', res.status, body);
+      return false;
+    }
+    const data = await res.json().catch(() => null);
+    return Boolean(data?.success ?? true);
   } catch (err) {
     console.error('[Sync API] Error saving settings to server:', err);
     return false;
