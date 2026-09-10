@@ -78,6 +78,7 @@ export interface RestaurantSettings {
   whatsappApiUrl?: string;     // URL do Gateway (Z-API, Evolution, Meta Cloud API)
   whatsappApiToken?: string;   // Token ou Chave da API do Gateway
   whatsappCustomMessage?: string; // Mensagem personalizada do voucher para WhatsApp (sem teste ou desconsiderar)
+  voucherMessageTemplate?: string; // Modelo editável da mensagem oficial do voucher por empresa
   whatsappTemplateName?: string; // Nome do template pré-aprovado pela Meta (avaliacao_brinde)
   whatsappTemplateLanguage?: string; // Idioma do template (ex: pt_BR, en_US)
   whatsappWebhookVerifyToken?: string; // Token de verificação do webhook da Meta
