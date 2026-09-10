@@ -558,14 +558,6 @@ if (!carregouPostgres) {
       saveDb(activeDb);
       console.log(`[Central Sync] Nova avaliação sincronizada! Mesa #${review.tableNumber || 'Salão'} • Cliente: ${review.customerName || 'Anônimo'} • Código: ${review.rewardCode}`);
 
-      // Persist to Firestore
-      try {
-        const cleaned = sanitizeObj(review);
-        await setDoc(doc(firestoreDb, 'companies', currentCompanyId(), 'reviews', review.id), cleaned, { merge: true });
-      } catch (fErr) {
-        console.warn('[Firestore Sync] Aviso ao salvar review no Firestore:', fErr);
-      }
-
       return res.json({
         success: true,
         review,
@@ -611,21 +603,6 @@ if (!carregouPostgres) {
       saveDb(activeDb);
       console.log(`[Central Sync] Voucher ${cleanCode} VALIDADO com sucesso para ${review.customerName || 'Cliente'}!`);
 
-      // Persist to Firestore
-      try {
-        await setDoc(
-          doc(firestoreDb, 'companies', currentCompanyId(), 'reviews', review.id),
-          {
-            rewardClaimed: true,
-            claimedAt: review.claimedAt,
-            claimedTable: review.claimedTable || null,
-          },
-          { merge: true }
-        );
-      } catch (fErr) {
-        console.warn('[Firestore Sync] Aviso ao validar no Firestore:', fErr);
-      }
-
       return res.json({
         success: true,
         review,
@@ -649,14 +626,6 @@ if (!carregouPostgres) {
       saveDb(activeDb);
       console.log(`[Central Sync] Avaliação ${id} removida do servidor. Antes: ${beforeCount}, Agora: ${activeDb.reviews.length}`);
 
-      // Delete from Firestore directly
-      try {
-        await deleteDoc(doc(firestoreDb, 'companies', currentCompanyId(), 'reviews', id));
-        console.log(`[Firestore Sync] Avaliação ${id} excluída do Firestore.`);
-      } catch (fErr) {
-        console.warn(`[Firestore Sync] Aviso ao excluir review ${id} do Firestore:`, fErr);
-      }
-
       return res.json({
         success: true,
         deletedId: id,
@@ -675,19 +644,6 @@ if (!carregouPostgres) {
       activeDb.reviews = [];
       saveDb(activeDb);
       console.log('[Central Sync] Todas as avaliações foram limpas do servidor.');
-
-      // Also delete from Firestore
-      try {
-        const snap = await getDocs(collection(firestoreDb, 'companies', currentCompanyId(), 'reviews'));
-        const deletePromises: Promise<any>[] = [];
-        snap.forEach((d) => {
-          deletePromises.push(deleteDoc(d.ref));
-        });
-        await Promise.all(deletePromises);
-        console.log(`[Firestore Sync] Todas as ${deletePromises.length} avaliações foram limpas do Firestore.`);
-      } catch (fErr) {
-        console.warn('[Firestore Sync] Aviso ao limpar avaliações do Firestore:', fErr);
-      }
 
       return res.json({ success: true, reviews: [] });
     } catch (err: any) {
