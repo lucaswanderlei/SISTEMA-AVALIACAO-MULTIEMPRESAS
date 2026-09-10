@@ -59,6 +59,28 @@ interface ManagerDashboardProps {
   onSaveDatabase?: () => Promise<boolean> | void;
 }
 
+const DEFAULT_VOUCHER_TEMPLATE = `*VOUCHER DE CORTESIA - {{empresa}}* 🥟✨
+
+Olá {{cliente}}! Aqui estão os detalhes do seu brinde conquistado na avaliação:
+
+🎁 *Brinde:* {{brinde}}
+🎟️ *Código de Resgate:* {{codigo}}
+📅 *Prazo de Início:* Liberado para resgate a partir de {{inicio}} (24h após o sorteio)
+⏳ *Prazo para Expirar:* Válido até {{expira}} ({{validade_dias}} dias de validade)
+⚠️ *Regra Importante:* Só é válido utilizar 1 cortesia/brinde por mesa!
+
+Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos você! 💛`;
+
+const renderVoucherPreview = (template: string, settings: RestaurantSettings) =>
+  template
+    .replace(/{{\s*cliente\s*}}/gi, 'Cliente')
+    .replace(/{{\s*empresa\s*}}/gi, (settings.name || 'Empresa').toUpperCase())
+    .replace(/{{\s*brinde\s*}}/gi, 'PORÇÃO DE BATATA FRITA')
+    .replace(/{{\s*codigo\s*}}/gi, 'BRINDE-7777')
+    .replace(/{{\s*inicio\s*}}/gi, 'amanhã')
+    .replace(/{{\s*expira\s*}}/gi, `em ${settings.rewardValidityDays || 15} dias`)
+    .replace(/{{\s*validade_dias\s*}}/gi, String(settings.rewardValidityDays || 15));
+
 export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
   reviews,
   rewards,
@@ -305,7 +327,7 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
           phone: testPhone,
           apiUrl: settings.whatsappApiUrl,
           apiToken: settings.whatsappApiToken,
-          message: `*VOUCHER DE CORTESIA - ${settings.name.toUpperCase()}* 🥟✨\n\nOlá! Aqui estão os detalhes do seu brinde conquistado na avaliação:\n\n🎁 *Brinde:* PORÇÃO DE BATATA FRITA\n🎟️ *Código de Resgate:* BRINDE-OFICIAL\n📅 *Prazo de Início:* Liberado para resgate a partir de amanhã\n⏳ *Prazo para Expirar:* Válido até ${settings.rewardValidityDays || 15} dias de validade\n⚠️ *Regra Importante:* Só é válido utilizar 1 cortesia/brinde por mesa!\n\nApresente este voucher ao garçom no ${settings.name} durante sua próxima visita. Esperamos você! 💛`,
+          message: renderVoucherPreview(settings.voucherMessageTemplate || DEFAULT_VOUCHER_TEMPLATE, settings),
         }),
       });
       const data = await res.json();
@@ -2723,18 +2745,32 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
                       Oficial Formatado
                     </span>
                   </div>
-                  <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 text-[11px] font-mono text-stone-800 whitespace-pre-wrap leading-relaxed">
-                    {`*VOUCHER DE CORTESIA - ${settings.name.toUpperCase()}* 🥟✨
-
-Olá Cliente! Aqui estão os detalhes do seu brinde conquistado na avaliação:
-
-🎁 *Brinde:* PORÇÃO DE BATATA FRITA
-🎟️ *Código de Resgate:* BRINDE-7777
-📅 *Prazo de Início:* Liberado para resgate a partir de amanhã (24h após o sorteio)
-⏳ *Prazo para Expirar:* Válido até ${settings.rewardValidityDays || 15} dias de validade
-⚠️ *Regra Importante:* Só é válido utilizar 1 cortesia/brinde por mesa!
-
-Apresente este voucher ao garçom no ${settings.name} durante sua próxima visita. Esperamos você! 💛`}
+                  <div className="space-y-2">
+                    <textarea
+                      rows={13}
+                      value={settings.voucherMessageTemplate || DEFAULT_VOUCHER_TEMPLATE}
+                      onChange={(e) => onUpdateSettings({ ...settings, voucherMessageTemplate: e.target.value })}
+                      className="w-full p-3 bg-white rounded-lg border border-stone-200 text-[11px] font-mono text-stone-800 leading-relaxed outline-none focus:border-rose-500 resize-y"
+                    />
+                    <div className="flex flex-wrap gap-1.5 text-[10px] text-stone-600">
+                      <span className="font-bold">Campos automáticos:</span>
+                      {['{{cliente}}','{{empresa}}','{{brinde}}','{{codigo}}','{{inicio}}','{{expira}}','{{validade_dias}}'].map((tag) => (
+                        <code key={tag} className="px-1.5 py-0.5 rounded bg-stone-100 border border-stone-200">{tag}</code>
+                      ))}
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onUpdateSettings({ ...settings, voucherMessageTemplate: DEFAULT_VOUCHER_TEMPLATE })}
+                        className="px-3 py-1.5 rounded-lg border border-stone-200 bg-white hover:bg-stone-50 text-[10px] font-bold text-stone-700"
+                      >
+                        Restaurar texto padrão
+                      </button>
+                      <span className="text-[10px] text-stone-500">Clique em “Salvar Dados da API no Banco” para gravar.</span>
+                    </div>
+                    <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 text-[11px] font-mono text-stone-800 whitespace-pre-wrap leading-relaxed">
+                      {renderVoucherPreview(settings.voucherMessageTemplate || DEFAULT_VOUCHER_TEMPLATE, settings)}
+                    </div>
                   </div>
                 </div>
 
