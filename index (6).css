@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+@media print {
+  header,
+  nav,
+  footer,
+  .no-print,
+  #nav-btn-customer,
+  #nav-btn-qr,
+  #nav-btn-manager,
+  #btn-request-manager {
+    display: none !important;
+  }
+
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  main {
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  .page-break {
+    page-break-after: always;
+  }
+
+  /* Specific sizing for 10x8 display print */
+  .display-10x8-print {
+    width: 10cm !important;
+    height: 8cm !important;
+    max-width: 10cm !important;
+    max-height: 8cm !important;
+    page-break-inside: avoid !important;
+  }
+}

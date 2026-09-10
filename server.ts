@@ -263,7 +263,8 @@ function loadDb(): RestaurantDb {
   };
 }
 const postgresSaveQueues = new Map<string, Promise<void>>();
-async function saveDbToPostgres(db: RestaurantDb, empresaId = currentCompanyId()): Promise<void> {
+async function saveDbToPostgres(db: RestaurantDb): Promise<void> {
+  const empresaId = currentCompanyId();
   // Snapshot now: later UI/API mutations cannot change what this save represents.
   const snapshot = JSON.stringify(db);
   const nome = db.settings?.name || empresaId;
@@ -283,7 +284,6 @@ async function saveDbToPostgres(db: RestaurantDb, empresaId = currentCompanyId()
   await queued;
 }
 function saveDb(db: RestaurantDb): void {
-  const empresaId = currentCompanyId();
   try {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -294,7 +294,7 @@ function saveDb(db: RestaurantDb): void {
       fs.writeFileSync(DB_BACKUP_FILE, content, 'utf-8');
     } catch {}
     console.log(`[Database] Salvo com sucesso (${db.rewards.length} brindes, ${db.waiters.length} garçons, ${db.reviews.length} avaliações)`);
-    void saveDbToPostgres(db, empresaId);
+    void saveDbToPostgres(db);
   } catch (err) {
     console.error('Error writing DB_FILE:', err);
   }
@@ -425,7 +425,7 @@ if (!carregouPostgres) {
   });
   const PORT = process.env.NODE_ENV === 'production' ? 3000 : 3001;
 
-  app.use(express.json());
+  app.use(express.json({ limit: '5mb' }));
 
   // Administração geral multiempresa. Proteja com SUPER_ADMIN_KEY no Render.
   function requireSuperAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
@@ -698,13 +698,19 @@ if (!carregouPostgres) {
   // Update Settings
   app.post('/api/settings', async (req, res) => {
     try {
-      const empresaId = currentCompanyId();
       activeDb.settings = { ...activeDb.settings, ...req.body };
-      // Confirma no PostgreSQL antes de responder. Isso evita perder logo, cores,
-      // ícone e destaques se a instância reiniciar logo após a alteração.
-      await saveDbToPostgres(activeDb, empresaId);
+      try {
+        if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+        const content = JSON.stringify(activeDb, null, 2);
+        fs.writeFileSync(DB_FILE, content, 'utf-8');
+        try { fs.writeFileSync(DB_BACKUP_FILE, content, 'utf-8'); } catch {}
+      } catch (fileErr) {
+        console.warn('[Database] Falha ao gravar cópia local:', fileErr);
+      }
+      await saveDbToPostgres(activeDb);
       return res.json({ success: true, settings: activeDb.settings });
     } catch (err: any) {
+      console.error('[Settings] Erro ao salvar configurações:', err);
       return res.status(500).json({ error: err?.message || 'Erro ao salvar configurações.' });
     }
   });
