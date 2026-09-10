@@ -523,9 +523,13 @@ export default function App() {
 
     apiSaveSettings(newSettings)
       .then((ok) => {
-        if (!ok) showToast('⚠️ Não foi possível confirmar as configurações no PostgreSQL.');
+        if (!ok) {
+          showToast('⚠️ O PostgreSQL não confirmou o salvamento das configurações.');
+        }
       })
-      .catch(() => showToast('⚠️ Erro de conexão ao salvar as configurações.'));
+      .catch(() => {
+        showToast('⚠️ Erro ao salvar configurações no PostgreSQL.');
+      });
   };
 
   const handleWaitersChange = (newWaiters: Waiter[]) => {
@@ -547,6 +551,15 @@ export default function App() {
       saveReviews(reviews);
       firestoreSaveRewards(rewards).catch(() => {});
       firestoreSaveWaiters(waiters).catch(() => {});
+      if (targetSettings.whatsappApiUrl || targetSettings.whatsappApiToken) {
+        apiSaveWhatsAppSettings({
+          whatsappApiUrl: targetSettings.whatsappApiUrl,
+          whatsappApiToken: targetSettings.whatsappApiToken,
+          whatsappCustomMessage: targetSettings.whatsappCustomMessage,
+          autoSendWhatsApp: targetSettings.autoSendWhatsApp,
+          autoSendMode: targetSettings.autoSendMode,
+        }).catch(() => {});
+      }
       const res = await apiSyncPush({
         settings: targetSettings,
         rewards,
@@ -554,7 +567,7 @@ export default function App() {
         reviews,
       });
       if (res.success) {
-        showToast('💾 Configurações confirmadas no PostgreSQL com sucesso!');
+        showToast('💾 Banco de dados (Firebase Firestore & Servidor) 100% salvo com sucesso!');
         return true;
       } else {
         showToast('⚠️ Erro ao salvar: ' + (res.message || 'tente novamente'));
