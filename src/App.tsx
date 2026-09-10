@@ -531,8 +531,8 @@ export default function App() {
         autoSendMode: newSettings.autoSendMode,
       }).catch(() => {});
     }
+    // Single authoritative write avoids older concurrent requests overwriting newer settings.
     apiSaveSettings(newSettings).catch(() => {});
-    apiSyncPush({ settings: newSettings }).catch(() => {});
   };
 
   const handleWaitersChange = (newWaiters: Waiter[]) => {
