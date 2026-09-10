@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Building2, ExternalLink, KeyRound, LogOut, Plus, RefreshCw, ShieldCheck, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Building2, Check, ExternalLink, KeyRound, LogOut, Pencil, Plus, RefreshCw, ShieldCheck, ToggleLeft, ToggleRight, Trash2, X } from 'lucide-react';
 
 type Company = { empresa_id: string; nome: string; slug: string; ativo: boolean; criado_em?: string; atualizado_em?: string };
 
@@ -11,6 +11,9 @@ export function SuperAdmin() {
   const [slug, setSlug] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState('');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const request = async (url: string, init: RequestInit = {}) => {
     const headers = new Headers(init.headers || {});
@@ -60,8 +63,136 @@ export function SuperAdmin() {
       await load();
     } catch(e:any) { setError(e.message || 'Erro ao alterar status.'); }
   };
+  const startEdit = (company: Company) => {
+    setEditingId(company.empresa_id);
+    setEditingName(company.nome);
+    setError('');
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditingName('');
+  };
+
+  const saveName = async (company: Company) => {
+    const clean = editingName.trim();
+    if (!clean) { setError('Informe um nome válido para a empresa.'); return; }
+    setError('');
+    try {
+      const res = await request(`/api/admin/companies/${encodeURIComponent(company.empresa_id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ nome: clean }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Não foi possível editar o nome da empresa.');
+      cancelEdit();
+      await load();
+    } catch (e:any) { setError(e.message || 'Erro ao editar empresa.'); }
+  };
+
+  const deleteCompany = async (company: Company) => {
+    if (deletingId === company.empresa_id) return;
+    const confirmed = window.confirm(`Excluir definitivamente a empresa “${company.nome}”?\n\nIsso apagará os dados dessa empresa, incluindo avaliações armazenadas para ela. Esta ação não pode ser desfeita.`);
+    if (!confirmed) return;
+    setDeletingId(company.empresa_id);
+    setError('');
+    try {
+      const res = await request(`/api/admin/companies/${encodeURIComponent(company.empresa_id)}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Não foi possível excluir a empresa.');
+      if (editingId === company.empresa_id) cancelEdit();
+      await load();
+    } catch (e:any) { setError(e.message || 'Erro ao excluir empresa.'); }
+    finally { setDeletingId(null); }
+  };
+
 
   if (!key) return <div className="min-h-screen bg-stone-100 flex items-center justify-center p-4"><form onSubmit={login} className="w-full max-w-md bg-white rounded-3xl shadow-xl border border-stone-200 p-7 space-y-5"><div className="w-12 h-12 rounded-2xl bg-stone-900 text-white flex items-center justify-center"><KeyRound className="w-6 h-6"/></div><div><h1 className="text-2xl font-black text-stone-900">Administrador Geral</h1><p className="text-sm text-stone-500 mt-1">Acesso exclusivo à gestão das empresas da plataforma.</p></div><input type="password" value={draftKey} onChange={e=>setDraftKey(e.target.value)} placeholder="SUPER_ADMIN_KEY" autoFocus className="w-full border border-stone-300 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-stone-900"/><button className="w-full bg-stone-900 text-white font-bold rounded-xl py-3 flex items-center justify-center gap-2"><ShieldCheck className="w-4 h-4"/>Entrar</button></form></div>;
 
-  return <div className="min-h-screen bg-stone-100"><header className="bg-white border-b border-stone-200"><div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between"><div><h1 className="text-xl font-black text-stone-900">Painel Multiempresas</h1><p className="text-xs text-stone-500">Administrador geral da plataforma <span className="ml-2 font-bold text-rose-600">v6</span></p></div><button onClick={()=>{sessionStorage.removeItem('super_admin_key');setKey('');setCompanies([])}} className="text-sm font-bold flex items-center gap-2 px-3 py-2 rounded-xl bg-stone-100"><LogOut className="w-4 h-4"/>Sair</button></div></header><main className="max-w-6xl mx-auto p-4 sm:p-6 space-y-6">{error && <div className="bg-rose-50 text-rose-700 border border-rose-200 rounded-xl p-3 text-sm font-semibold">{error}</div>}<section className="bg-white rounded-2xl border border-stone-200 p-5"><h2 className="font-black text-stone-900 mb-4 flex gap-2 items-center"><Plus className="w-5 h-5"/>Cadastrar nova empresa</h2><form onSubmit={createCompany} className="grid md:grid-cols-[1fr_1fr_auto] gap-3"><input required value={name} onChange={e=>setName(e.target.value)} placeholder="Nome da empresa" className="border border-stone-300 rounded-xl px-4 py-3"/><input required value={slug} onChange={e=>setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g,'-'))} placeholder="identificador-ex: pizzaria-teste" className="border border-stone-300 rounded-xl px-4 py-3"/><button className="bg-rose-600 text-white font-bold px-5 py-3 rounded-xl">Cadastrar</button></form></section><section className="bg-white rounded-2xl border border-stone-200 overflow-hidden"><div className="p-5 border-b border-stone-200 flex items-center justify-between"><div><h2 className="font-black text-stone-900 flex gap-2 items-center"><Building2 className="w-5 h-5"/>Empresas</h2><p className="text-xs text-stone-500 mt-1">{companies.length} empresa(s) cadastrada(s)</p></div><button onClick={load} className="p-2 rounded-xl bg-stone-100" title="Atualizar"><RefreshCw className={`w-4 h-4 ${busy?'animate-spin':''}`}/></button></div><div className="divide-y divide-stone-100">{companies.length===0 && !busy ? <div className="p-8 text-center text-stone-400">Nenhuma empresa cadastrada ainda.</div> : companies.map(c=><div key={c.empresa_id} className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center gap-3 justify-between"><div><div className="font-extrabold text-stone-900">{c.nome}</div><div className="text-xs text-stone-500">ID: {c.empresa_id}</div></div><div className="flex flex-wrap items-center gap-2"><span className={`text-xs font-bold px-2.5 py-1 rounded-full ${c.ativo?'bg-emerald-50 text-emerald-700':'bg-stone-100 text-stone-500'}`}>{c.ativo?'Ativa':'Desativada'}</span><a target="_blank" rel="noreferrer" href={`/?empresa=${encodeURIComponent(c.empresa_id)}&cliente=1`} className="text-xs font-bold px-3 py-2 rounded-xl bg-stone-100 flex gap-1.5 items-center">Avaliação <ExternalLink className="w-3.5 h-3.5"/></a><a target="_blank" rel="noreferrer" href={`/?empresa=${encodeURIComponent(c.empresa_id)}&gerencia=1&config=1&build=v6`} className="text-xs font-bold px-3 py-2 rounded-xl bg-stone-100 flex gap-1.5 items-center">Gerência <ExternalLink className="w-3.5 h-3.5"/></a><button onClick={()=>toggle(c)} className="text-xs font-bold px-3 py-2 rounded-xl bg-stone-900 text-white flex gap-1.5 items-center">{c.ativo?<ToggleRight className="w-4 h-4"/>:<ToggleLeft className="w-4 h-4"/>}{c.ativo?'Desativar':'Ativar'}</button></div></div>)}</div></section></main></div>;
+  return (
+    <div className="min-h-screen bg-stone-100">
+      <header className="bg-white border-b border-stone-200">
+        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-black text-stone-900">Painel Multiempresas</h1>
+            <p className="text-xs text-stone-500">Administrador geral da plataforma</p>
+          </div>
+          <button onClick={()=>{sessionStorage.removeItem('super_admin_key');setKey('');setCompanies([])}} className="text-sm font-bold flex items-center gap-2 px-3 py-2 rounded-xl bg-stone-100">
+            <LogOut className="w-4 h-4"/>Sair
+          </button>
+        </div>
+      </header>
+
+      <main className="max-w-6xl mx-auto p-4 sm:p-6 space-y-6">
+        {error && <div className="bg-rose-50 text-rose-700 border border-rose-200 rounded-xl p-3 text-sm font-semibold">{error}</div>}
+
+        <section className="bg-white rounded-2xl border border-stone-200 p-5">
+          <h2 className="font-black text-stone-900 mb-4 flex gap-2 items-center"><Plus className="w-5 h-5"/>Cadastrar nova empresa</h2>
+          <form onSubmit={createCompany} className="grid md:grid-cols-[1fr_1fr_auto] gap-3">
+            <input required value={name} onChange={e=>setName(e.target.value)} placeholder="Nome da empresa" className="border border-stone-300 rounded-xl px-4 py-3"/>
+            <input required value={slug} onChange={e=>setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g,'-'))} placeholder="identificador-ex: pizzaria-teste" className="border border-stone-300 rounded-xl px-4 py-3"/>
+            <button className="bg-rose-600 text-white font-bold px-5 py-3 rounded-xl">Cadastrar</button>
+          </form>
+        </section>
+
+        <section className="bg-white rounded-2xl border border-stone-200 overflow-hidden">
+          <div className="p-5 border-b border-stone-200 flex items-center justify-between">
+            <div>
+              <h2 className="font-black text-stone-900 flex gap-2 items-center"><Building2 className="w-5 h-5"/>Empresas</h2>
+              <p className="text-xs text-stone-500 mt-1">{companies.length} empresa(s) cadastrada(s)</p>
+            </div>
+            <button onClick={load} className="p-2 rounded-xl bg-stone-100" title="Atualizar"><RefreshCw className={`w-4 h-4 ${busy?'animate-spin':''}`}/></button>
+          </div>
+
+          <div className="divide-y divide-stone-100">
+            {companies.length===0 && !busy ? (
+              <div className="p-8 text-center text-stone-400">Nenhuma empresa cadastrada ainda.</div>
+            ) : companies.map(c => (
+              <div key={c.empresa_id} className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+                <div className="min-w-0 flex-1">
+                  {editingId === c.empresa_id ? (
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 max-w-xl">
+                      <input
+                        autoFocus
+                        value={editingName}
+                        onChange={e=>setEditingName(e.target.value)}
+                        onKeyDown={e=>{ if(e.key==='Enter'){e.preventDefault();void saveName(c)} if(e.key==='Escape')cancelEdit(); }}
+                        className="w-full border border-stone-300 rounded-xl px-3 py-2 font-bold outline-none focus:ring-2 focus:ring-rose-500"
+                      />
+                      <div className="flex gap-2">
+                        <button onClick={()=>void saveName(c)} className="p-2 rounded-xl bg-emerald-600 text-white" title="Salvar nome"><Check className="w-4 h-4"/></button>
+                        <button onClick={cancelEdit} className="p-2 rounded-xl bg-stone-200 text-stone-700" title="Cancelar"><X className="w-4 h-4"/></button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <div className="font-extrabold text-stone-900 truncate">{c.nome}</div>
+                      <button onClick={()=>startEdit(c)} className="p-1.5 rounded-lg text-stone-500 hover:bg-stone-100 hover:text-stone-900" title="Editar nome"><Pencil className="w-4 h-4"/></button>
+                    </div>
+                  )}
+                  <div className="text-xs text-stone-500 mt-0.5">ID: {c.empresa_id}</div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${c.ativo?'bg-emerald-50 text-emerald-700':'bg-stone-100 text-stone-500'}`}>{c.ativo?'Ativa':'Desativada'}</span>
+                  <a target="_blank" rel="noreferrer" href={`/?empresa=${encodeURIComponent(c.empresa_id)}&cliente=1`} className="text-xs font-bold px-3 py-2 rounded-xl bg-stone-100 flex gap-1.5 items-center">Avaliação <ExternalLink className="w-3.5 h-3.5"/></a>
+                  <a target="_blank" rel="noreferrer" href={`/?empresa=${encodeURIComponent(c.empresa_id)}&gerencia=1&config=1`} className="text-xs font-bold px-3 py-2 rounded-xl bg-stone-100 flex gap-1.5 items-center">Gerência <ExternalLink className="w-3.5 h-3.5"/></a>
+                  <button onClick={()=>toggle(c)} className="text-xs font-bold px-3 py-2 rounded-xl bg-stone-900 text-white flex gap-1.5 items-center">{c.ativo?<ToggleRight className="w-4 h-4"/>:<ToggleLeft className="w-4 h-4"/>}{c.ativo?'Desativar':'Ativar'}</button>
+                  <button
+                    onClick={()=>void deleteCompany(c)}
+                    disabled={deletingId===c.empresa_id}
+                    className="text-xs font-bold px-3 py-2 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 disabled:opacity-50 flex gap-1.5 items-center"
+                    title="Excluir empresa definitivamente"
+                  >
+                    <Trash2 className="w-4 h-4"/>{deletingId===c.empresa_id?'Excluindo...':'Excluir'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+
 }
