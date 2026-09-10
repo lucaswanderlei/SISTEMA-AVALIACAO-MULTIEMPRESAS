@@ -110,6 +110,17 @@ const DEFAULT_SETTINGS = {
   whatsappApiUrl: '',
   whatsappApiToken: '',
   whatsappCustomMessage: '',
+  voucherMessageTemplate: `*VOUCHER DE CORTESIA - {{empresa}}* 🥟✨
+
+Olá {{cliente}}! Aqui estão os detalhes do seu brinde conquistado na avaliação:
+
+🎁 *Brinde:* {{brinde}}
+🎟️ *Código de Resgate:* {{codigo}}
+📅 *Prazo de Início:* Liberado para resgate a partir de {{inicio}} (24h após o sorteio)
+⏳ *Prazo para Expirar:* Válido até {{expira}} ({{validade_dias}} dias de validade)
+⚠️ *Regra Importante:* Só é válido utilizar 1 cortesia/brinde por mesa!
+
+Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos você! 💛`,
   whatsappTemplateName: 'avaliacao_brinde',
   whatsappTemplateLanguage: 'pt_BR',
   whatsappWebhookVerifyToken: 'srcoxita_webhook_2026',
@@ -811,7 +822,7 @@ if (!carregouPostgres) {
       .trim();
   }
 
-  // Helper to build official customer voucher message without any test jargon
+  // Helper to build official customer voucher message using the company's editable template.
   function buildOfficialVoucherMessage({
     customerName,
     rewardTitle,
@@ -830,17 +841,28 @@ if (!carregouPostgres) {
     const firstName = customerName ? customerName.trim().split(' ')[0] : 'Cliente';
     const availDate = availableFrom ? new Date(availableFrom).toLocaleDateString('pt-BR') : 'amanhã';
     const expDate = expiresAt ? new Date(expiresAt).toLocaleDateString('pt-BR') : 'em 15 dias';
+    const validityDays = activeDb.settings.rewardValidityDays || 15;
+    const fallbackTemplate = `*VOUCHER DE CORTESIA - {{empresa}}* 🥟✨
 
-    return (
-      `*VOUCHER DE CORTESIA - ${restaurantName.toUpperCase()}* 🥟✨\n\n` +
-      `Olá ${firstName}! Aqui estão os detalhes do seu brinde conquistado na avaliação:\n\n` +
-      `🎁 *Brinde:* ${rewardTitle || 'Cortesia especial'}\n` +
-      `🎟️ *Código de Resgate:* ${rewardCode || ''}\n` +
-      `📅 *Prazo de Início:* Liberado para resgate a partir de ${availDate} (24h após o sorteio)\n` +
-      `⏳ *Prazo para Expirar:* Válido até ${expDate} (15 dias de validade)\n` +
-      `⚠️ *Regra Importante:* Só é válido utilizar 1 cortesia/brinde por mesa!\n\n` +
-      `Apresente este voucher ao garçom no ${restaurantName} durante sua próxima visita. Esperamos você! 💛`
-    );
+Olá {{cliente}}! Aqui estão os detalhes do seu brinde conquistado na avaliação:
+
+🎁 *Brinde:* {{brinde}}
+🎟️ *Código de Resgate:* {{codigo}}
+📅 *Prazo de Início:* Liberado para resgate a partir de {{inicio}} (24h após o sorteio)
+⏳ *Prazo para Expirar:* Válido até {{expira}} ({{validade_dias}} dias de validade)
+⚠️ *Regra Importante:* Só é válido utilizar 1 cortesia/brinde por mesa!
+
+Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos você! 💛`;
+    const template = String(activeDb.settings.voucherMessageTemplate || fallbackTemplate);
+
+    return template
+      .replace(/{{\s*cliente\s*}}/gi, firstName)
+      .replace(/{{\s*empresa\s*}}/gi, restaurantName.toUpperCase())
+      .replace(/{{\s*brinde\s*}}/gi, rewardTitle || 'Cortesia especial')
+      .replace(/{{\s*codigo\s*}}/gi, rewardCode || '')
+      .replace(/{{\s*inicio\s*}}/gi, availDate)
+      .replace(/{{\s*expira\s*}}/gi, expDate)
+      .replace(/{{\s*validade_dias\s*}}/gi, String(validityDays));
   }
 
   // Build official expiring 5 days reminder
