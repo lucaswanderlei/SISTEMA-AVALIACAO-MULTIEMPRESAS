@@ -55,17 +55,6 @@ import {
   apiUpdatePin,
   apiSaveWhatsAppSettings,
 } from './lib/api';
-import {
-  testFirestoreConnection,
-  firestoreSaveReview,
-  firestoreSaveRewards,
-  firestoreSaveWaiters,
-  firestoreSaveSettings,
-  firestoreFetchSettings,
-  firestoreDeleteReview,
-  firestoreFetchReviews,
-  subscribeToReviews,
-} from './lib/firebase';
 import { CustomerEvaluation } from './components/CustomerEvaluation';
 import { TableQrDisplay } from './components/TableQrDisplay';
 import { ManagerDashboard } from './components/ManagerDashboard';
@@ -145,7 +134,7 @@ export default function App() {
     return (directManagerRoute || params.get('gerencia') === '1') ? 'manager' : 'customer';
   });
   const [notification, setNotification] = useState<string | null>(null);
-  const [isFirebaseConnected, setIsFirebaseConnected] = useState<boolean>(true);
+  const [isFirebaseConnected] = useState<boolean>(false);
 
   // PIN security modal state
   const [showPinModal, setShowPinModal] = useState<boolean>(false);
@@ -317,81 +306,8 @@ export default function App() {
         console.warn('Initial sync error:', err);
       });
 
-    // Test Firestore connection on boot
-    testFirestoreConnection()
-      .then((ok) => {
-        setIsFirebaseConnected(ok);
-        if (ok) {
-          console.log('[Firebase] Firestore conectado com sucesso.');
-        }
-      })
-      .catch(() => {
-        setIsFirebaseConnected(false);
-      });
-
-    // A. Fetch all reviews from Firestore on mount
-    firestoreFetchReviews()
-      .then((fsReviews) => {
-        if (!isMounted || !fsReviews || fsReviews.length === 0) return;
-        setReviews((prev) => {
-          const map = new Map<string, Review>();
-          prev.forEach((r) => {
-            if (!deletedReviewIdsRef.current.has(r.id)) {
-              map.set(r.id, r);
-            }
-          });
-          fsReviews.forEach((r) => {
-            if (!deletedReviewIdsRef.current.has(r.id)) {
-              map.set(r.id, r);
-            }
-          });
-          const merged = Array.from(map.values()).sort(
-            (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-          );
-          saveReviews(merged);
-          merged.forEach((r) => knownReviewIdsRef.current.add(r.id));
-          return merged;
-        });
-      })
-      .catch((err) => {
-        console.warn('[Firebase] Initial reviews fetch warning:', err);
-      });
-
-    // B. Real-time Firestore subscription (onSnapshot)
-    const unsubscribeFirestore = subscribeToReviews((fsReviews) => {
-      if (!isMounted || !fsReviews || !Array.isArray(fsReviews)) return;
-      const cleanFsReviews = fsReviews.filter((r) => !deletedReviewIdsRef.current.has(r.id));
-
-      // Check for new customer reviews
-      const newReviews = cleanFsReviews.filter((r) => !knownReviewIdsRef.current.has(r.id));
-      if (newReviews.length > 0) {
-        newReviews.forEach((r) => knownReviewIdsRef.current.add(r.id));
-        const latest = newReviews[0];
-        const tableStr = latest.tableNumber ? `Mesa #${latest.tableNumber}` : 'Salão';
-        const customerStr = latest.customerName || 'Cliente';
-        showToast(`🔔 Nova avaliação recebida em tempo real da ${tableStr}! (${latest.ratings?.service || 5}★ de ${customerStr})`);
-        playChimeSound();
-      }
-
-      setReviews((prev) => {
-        const filteredPrev = prev.filter((r) => !deletedReviewIdsRef.current.has(r.id));
-        const map = new Map<string, Review>();
-        filteredPrev.forEach((r) => map.set(r.id, r));
-        cleanFsReviews.forEach((r) => map.set(r.id, r));
-        const merged = Array.from(map.values()).sort(
-          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
-        if (JSON.stringify(prev) !== JSON.stringify(merged)) {
-          saveReviews(merged);
-          return merged;
-        }
-        return prev;
-      });
-    });
-
     return () => {
       isMounted = false;
-      unsubscribeFirestore();
     };
   }, []);
 
@@ -495,7 +411,7 @@ export default function App() {
     showToast('Painel do restaurante bloqueado com sucesso.');
   };
 
-  // Sync to local storage & central server & Firebase Firestore
+  // Sync to local storage & central PostgreSQL server
   const handleReviewsChange = (newReviews: Review[]) => {
     setReviews(newReviews);
     saveReviews(newReviews);
@@ -506,7 +422,6 @@ export default function App() {
     saveRewards(newRewards);
     apiSaveRewards(newRewards).catch(() => {});
     apiSyncPush({ rewards: newRewards }).catch(() => {});
-    firestoreSaveRewards(newRewards).catch(() => {});
   };
 
   const handleSettingsChange = (newSettings: RestaurantSettings) => {
@@ -537,10 +452,9 @@ export default function App() {
     saveWaiters(newWaiters);
     apiSaveWaiters(newWaiters).catch(() => {});
     apiSyncPush({ waiters: newWaiters }).catch(() => {});
-    firestoreSaveWaiters(newWaiters).catch(() => {});
   };
 
-  // Force Save Complete Database (both localStorage, server file restaurant_db.json & Firebase Firestore)
+  // Force Save Complete Database (local cache + PostgreSQL server)
   const handleForceSaveDatabase = async (explicitSettings?: RestaurantSettings): Promise<boolean> => {
     const targetSettings = explicitSettings || settings;
     try {
@@ -549,8 +463,6 @@ export default function App() {
       saveRewards(rewards);
       saveWaiters(waiters);
       saveReviews(reviews);
-      firestoreSaveRewards(rewards).catch(() => {});
-      firestoreSaveWaiters(waiters).catch(() => {});
       if (targetSettings.whatsappApiUrl || targetSettings.whatsappApiToken) {
         apiSaveWhatsAppSettings({
           whatsappApiUrl: targetSettings.whatsappApiUrl,
@@ -567,7 +479,7 @@ export default function App() {
         reviews,
       });
       if (res.success) {
-        showToast('💾 Banco de dados (Firebase Firestore & Servidor) 100% salvo com sucesso!');
+        showToast('💾 Banco de dados PostgreSQL salvo com sucesso!');
         return true;
       } else {
         showToast('⚠️ Erro ao salvar: ' + (res.message || 'tente novamente'));
@@ -592,15 +504,6 @@ export default function App() {
     } catch (err) {
       console.warn('Central server sync notice:', err);
     }
-
-    // Synchronize with Firebase Firestore
-    try {
-      await firestoreSaveReview(newReview);
-    } catch (err) {
-      console.warn('Firestore review save notice:', err);
-    }
-
-    // Redundant atomic push to server
     apiSyncPush({ reviews: updated }).catch(() => {});
 
     showToast(
@@ -653,7 +556,6 @@ export default function App() {
 
       // Validate on central server & Firebase Firestore
       apiValidateReward(normalized, tableUsed).catch(() => {});
-      firestoreSaveReview(updated[index]).catch(() => {});
       apiSyncPush({ reviews: updated }).catch(() => {});
 
       showToast(
@@ -670,7 +572,6 @@ export default function App() {
       if (serverResult.success && serverResult.review) {
         const updated = [serverResult.review, ...reviews.filter((r) => r.id !== serverResult.review!.id)];
         handleReviewsChange(updated);
-        firestoreSaveReview(serverResult.review).catch(() => {});
         showToast(`✅ Brinde validado no sistema central com sucesso!`);
         return true;
       } else if (serverResult.error) {
@@ -699,7 +600,6 @@ export default function App() {
     });
 
     // 4. Delete directly from Firestore
-    firestoreDeleteReview(id).catch(() => {});
 
     // 5. Update authoritative reviews state on server
     apiSyncPush({ reviews: updated }).catch(() => {});
