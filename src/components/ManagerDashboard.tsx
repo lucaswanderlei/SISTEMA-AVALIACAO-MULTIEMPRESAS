@@ -107,7 +107,7 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
   });
 
   const quickTagsOptions =
-    settings.quickTagsOptions && settings.quickTagsOptions.length > 0
+    Array.isArray(settings.quickTagsOptions)
       ? settings.quickTagsOptions
       : QUICK_TAGS_OPTIONS;
 
@@ -2442,85 +2442,32 @@ return (
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-stone-700 mb-1">URL da logomarca</label>
-            <input type="url" value={settings.logoUrl || ''} onChange={(e) => onUpdateSettings({ ...settings, logoUrl: e.target.value })} placeholder="https://.../logo.png" className="w-full text-xs p-2.5 rounded-xl border border-stone-200 focus:border-rose-500 outline-none" />
-            {settings.logoUrl && <div className="mt-2 flex items-center gap-2"><img src={settings.logoUrl} alt="Prévia da logo" className="w-12 h-12 rounded-xl object-cover border border-stone-200"/><span className="text-[11px] text-stone-400">Prévia da logomarca</span></div>
+            <label className="block text-xs font-semibold text-stone-700 mb-1">Logomarca da empresa</label>
+            <div className="flex flex-col gap-3">
+              <input type="url" value={settings.logoUrl || ''} onChange={(e) => onUpdateSettings({ ...settings, logoUrl: e.target.value })} placeholder="https://.../logo.png" className="w-full text-xs p-2.5 rounded-xl border border-stone-200 focus:border-rose-500 outline-none" />
+              <label className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-stone-300 bg-white px-4 py-2.5 text-xs font-bold hover:bg-stone-50">
+                <Upload className="w-4 h-4 mr-2" /> Escolher imagem do computador
+                <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" className="hidden" onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  if (!file.type.startsWith('image/')) return alert('Selecione uma imagem válida.');
+                  if (file.size > 2 * 1024 * 1024) return alert('A imagem deve ter no máximo 2 MB.');
+                  const reader = new FileReader();
+                  reader.onload = () => onUpdateSettings({ ...settings, logoUrl: String(reader.result || '') });
+                  reader.readAsDataURL(file);
+                }} />
+              </label>
+              {settings.logoUrl && (
+                <div className="flex items-center gap-3 rounded-xl border border-stone-200 bg-stone-50 p-3">
+                  <img src={settings.logoUrl} alt="Prévia da logomarca" className="h-20 max-w-[220px] object-contain" />
+                  <button type="button" onClick={() => onUpdateSettings({ ...settings, logoUrl: '' })} className="text-xs font-bold text-rose-600 hover:text-rose-700">Remover logo</button>
+                </div>
+              )}
+              <p className="text-[11px] text-stone-400">Você pode informar uma URL ou escolher uma imagem do computador. PNG, JPG, WEBP ou SVG. Máximo de 2 MB.</p>
+            </div>
+          </div>
 
-<div>
-  <label className="block text-xs font-semibold text-stone-700 mb-1">
-    Logomarca da empresa
-  </label>
-
-  <div className="flex flex-col gap-3">
-    <input
-      type="url"
-      value={settings.logoUrl || ''}
-      onChange={(e) =>
-        onUpdateSettings({ ...settings, logoUrl: e.target.value })
-      }
-      placeholder="https://.../logo.png"
-      className="w-full text-xs p-2.5 rounded-xl border border-stone-200 focus:border-rose-500 outline-none"
-    />
-
-    <label className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-stone-300 bg-white px-4 py-2.5 text-xs font-bold hover:bg-stone-50">
-      <Upload className="w-4 h-4 mr-2" />
-      Escolher imagem do computador
-
-      <input
-        type="file"
-        accept="image/png,image/jpeg,image/webp,image/svg+xml"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (!file) return;
-
-          if (!file.type.startsWith('image/')) {
-            alert('Selecione uma imagem válida.');
-            return;
-          }
-
-          if (file.size > 2 * 1024 * 1024) {
-            alert('A imagem deve ter no máximo 2 MB.');
-            return;
-          }
-
-          const reader = new FileReader();
-          reader.onload = () => {
-            const dataUrl = String(reader.result || '');
-            onUpdateSettings({ ...settings, logoUrl: dataUrl });
-          };
-          reader.readAsDataURL(file);
-        }}
-      />
-    </label>
-
-    {settings.logoUrl && (
-      <div className="flex items-center gap-3 rounded-xl border border-stone-200 bg-stone-50 p-3">
-        <img
-          src={settings.logoUrl}
-          alt="Prévia da logomarca"
-          className="h-20 max-w-[220px] object-contain"
-        />
-
-        <button
-          type="button"
-          onClick={() =>
-            onUpdateSettings({ ...settings, logoUrl: '' })
-          }
-          className="text-xs font-bold text-rose-600 hover:text-rose-700"
-        >
-          Remover logo
-        </button>
-      </div>
-    )}
-
-    <p className="text-[11px] text-stone-400">
-      Você pode informar uma URL ou escolher uma imagem do computador.
-      PNG, JPG, WEBP ou SVG. Máximo de 2 MB.
-    </p>
-  </div>
-</div>
-  
+          <div className="space-y-3 p-3 rounded-xl border border-stone-200 bg-stone-50/50">
               <h4 className="text-xs font-black text-stone-800">Texto da página de avaliação</h4>
               <p className="text-[11px] text-stone-500">Cada empresa pode usar sua própria chamada para os clientes.</p>
             </div>
