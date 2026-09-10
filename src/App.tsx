@@ -178,8 +178,8 @@ export default function App() {
     }
   }, []);
 
-  // 1. Initial Load: PostgreSQL is authoritative.
-  // Never push local defaults back to the server during boot.
+  // 1. Initial Load: PostgreSQL is the ONLY authority.
+  // LocalStorage is only a temporary browser cache and is NEVER pushed during boot.
   useEffect(() => {
     let isMounted = true;
 
@@ -191,7 +191,6 @@ export default function App() {
           const serverSettings = syncData.settings as RestaurantSettings;
           setSettings(serverSettings);
           saveSettings(serverSettings);
-
           if (serverSettings.managerPin) savePin(serverSettings.managerPin);
           saveWhatsAppConfig({
             whatsappApiUrl: serverSettings.whatsappApiUrl,
@@ -211,13 +210,13 @@ export default function App() {
         }
 
         if (Array.isArray(syncData.reviews)) {
-          const cleanReviews = syncData.reviews
+          const serverReviews = syncData.reviews
             .filter((r) => !deletedReviewIdsRef.current.has(r.id))
             .sort((x, y) => new Date(y.createdAt).getTime() - new Date(x.createdAt).getTime());
 
-          setReviews(cleanReviews);
-          saveReviews(cleanReviews);
-          cleanReviews.forEach((r) => knownReviewIdsRef.current.add(r.id));
+          setReviews(serverReviews);
+          saveReviews(serverReviews);
+          serverReviews.forEach((r) => knownReviewIdsRef.current.add(r.id));
         }
 
         setIsServerSynced(true);
@@ -342,7 +341,6 @@ export default function App() {
     setRewards(newRewards);
     saveRewards(newRewards);
     apiSaveRewards(newRewards).catch(() => {});
-    apiSyncPush({ rewards: newRewards }).catch(() => {});
   };
 
   const handleSettingsChange = (newSettings: RestaurantSettings) => {
@@ -372,7 +370,6 @@ export default function App() {
     setWaiters(newWaiters);
     saveWaiters(newWaiters);
     apiSaveWaiters(newWaiters).catch(() => {});
-    apiSyncPush({ waiters: newWaiters }).catch(() => {});
   };
 
   // Force Save Complete Database (local cache + PostgreSQL server)
