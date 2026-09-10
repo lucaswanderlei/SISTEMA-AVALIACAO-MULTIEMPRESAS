@@ -345,16 +345,30 @@ function freshDb(): RestaurantDb {
 }
 async function loadCompanyDb(companyId: string): Promise<RestaurantDb> {
   if (tenantDbs.has(companyId)) return tenantDbs.get(companyId)!;
-  try {
-    const result = await pool.query('SELECT dados FROM avaliacao_empresas WHERE empresa_id=$1 AND ativo=TRUE LIMIT 1', [companyId]);
-    if (result.rows[0]?.dados) {
-      const parsed = result.rows[0].dados;
-      const db: RestaurantDb = { settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, rewards: Array.isArray(parsed.rewards) ? parsed.rewards : [], waiters: Array.isArray(parsed.waiters) ? parsed.waiters : [], reviews: Array.isArray(parsed.reviews) ? parsed.reviews : [] };
-      tenantDbs.set(companyId, db); return db;
-    }
-  } catch (e) { console.warn('[Multiempresa] Falha ao carregar empresa:', e); }
-  const db = freshDb(); tenantDbs.set(companyId, db); return db;
+
+  const result = await pool.query(
+    'SELECT dados FROM avaliacao_empresas WHERE empresa_id=$1 AND ativo=TRUE LIMIT 1',
+    [companyId]
+  );
+
+  if (!result.rows[0]?.dados) {
+    const err: any = new Error(`Empresa "${companyId}" não encontrada ou desativada.`);
+    err.code = 'COMPANY_NOT_FOUND';
+    throw err;
+  }
+
+  const parsed = result.rows[0].dados;
+  const db: RestaurantDb = {
+    settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) },
+    rewards: Array.isArray(parsed.rewards) ? parsed.rewards : [],
+    waiters: Array.isArray(parsed.waiters) ? parsed.waiters : [],
+    reviews: Array.isArray(parsed.reviews) ? parsed.reviews : [],
+  };
+
+  tenantDbs.set(companyId, db);
+  return db;
 }
+
 const activeDb = new Proxy({} as RestaurantDb, {
   get(_target, prop) {
     const id = currentCompanyId();
@@ -434,11 +448,29 @@ if (totalEmpresas === 0) {
 
 
   const app = express();
-  app.use(async (req, _res, next) => {
+
+  app.use(async (req, res, next) => {
     const companyId = normalizeCompanyId(req.header('X-Company-Id') || req.query.empresa || 'demo');
-    await loadCompanyDb(companyId);
-    tenantContext.run({ companyId }, next);
+
+    // Super Admin and health do not depend on a tenant DB being loaded.
+    if (req.path.startsWith('/api/admin/') || req.path === '/api/health') {
+      return tenantContext.run({ companyId }, next);
+    }
+
+    try {
+      await loadCompanyDb(companyId);
+      return tenantContext.run({ companyId }, next);
+    } catch (err: any) {
+      if (err?.code === 'COMPANY_NOT_FOUND') {
+        return res.status(404).json({ error: err.message });
+      }
+      console.error(`[Multiempresa] Falha ao carregar ${companyId} do PostgreSQL:`, err);
+      return res.status(503).json({
+        error: 'Banco temporariamente indisponível. Nenhum dado padrão foi gravado.',
+      });
+    }
   });
+
   const PORT = process.env.NODE_ENV === 'production' ? 3000 : 3001;
 
   app.use(express.json({ limit: '10mb' }));
@@ -554,8 +586,10 @@ if (totalEmpresas === 0) {
         source: 'postgresql',
       });
     } catch (err: any) {
-      console.error('[Sync] Erro ao carregar dados diretamente do PostgreSQL:', err);
-      return res.status(500).json({ error: err?.message || 'Erro ao carregar dados.' });
+      console.error('[Sync] Erro ao ler PostgreSQL:', err);
+      return res.status(503).json({
+        error: 'Não foi possível ler o PostgreSQL. Nenhum padrão será aplicado.',
+      });
     }
   });
 
@@ -713,7 +747,7 @@ if (totalEmpresas === 0) {
              ),
              nome = CASE WHEN $3 <> '' THEN $3 ELSE nome END,
              atualizado_em = NOW()
-         WHERE empresa_id = $1
+         WHERE empresa_id=$1 AND ativo=TRUE
          RETURNING dados`,
         [companyId, JSON.stringify(incoming), incomingName]
       );
@@ -723,14 +757,19 @@ if (totalEmpresas === 0) {
       }
 
       const persisted = result.rows[0].dados;
-      const current = tenantDbs.get(companyId) || freshDb();
+      const current = tenantDbs.get(companyId) || {
+        settings: { ...DEFAULT_SETTINGS },
+        rewards: [],
+        waiters: [],
+        reviews: [],
+      };
       current.settings = { ...DEFAULT_SETTINGS, ...(persisted.settings || {}) };
       if (Array.isArray(persisted.rewards)) current.rewards = persisted.rewards;
       if (Array.isArray(persisted.waiters)) current.waiters = persisted.waiters;
       if (Array.isArray(persisted.reviews)) current.reviews = persisted.reviews;
       tenantDbs.set(companyId, current);
 
-      console.log(`[PostgreSQL] Configurações da empresa ${companyId} persistidas atomicamente.`);
+      console.log(`[PostgreSQL] Configurações de ${companyId} persistidas sem substituir outras áreas.`);
 
       return res.json({
         success: true,
@@ -739,7 +778,7 @@ if (totalEmpresas === 0) {
         source: 'postgresql',
       });
     } catch (err: any) {
-      console.error('[Settings] Erro ao persistir configurações atomicamente:', err);
+      console.error('[Settings] Erro ao salvar:', err);
       return res.status(500).json({
         success: false,
         error: err?.message || 'Erro ao salvar configurações.',
@@ -748,37 +787,16 @@ if (totalEmpresas === 0) {
   });
 
   // Dedicated PIN Update Endpoint
-  app.post('/api/settings/pin', async (req, res) => {
+  app.post('/api/settings/pin', (req, res) => {
     try {
-      const companyId = currentCompanyId();
       const { pin } = req.body || {};
       if (!pin || typeof pin !== 'string' || pin.trim().length < 3) {
         return res.status(400).json({ error: 'PIN inválido. Mínimo de 3 caracteres.' });
       }
-
       const trimmedPin = pin.trim();
-      const result = await pool.query(
-        `UPDATE avaliacao_empresas
-         SET dados = jsonb_set(
-               COALESCE(dados, '{}'::jsonb),
-               '{settings}',
-               COALESCE(dados->'settings', '{}'::jsonb) || $2::jsonb,
-               true
-             ),
-             atualizado_em = NOW()
-         WHERE empresa_id=$1
-         RETURNING dados`,
-        [companyId, JSON.stringify({ managerPin: trimmedPin })]
-      );
-
-      if (!result.rows[0]?.dados) {
-        return res.status(404).json({ error: 'Empresa não encontrada.' });
-      }
-
-      const current = tenantDbs.get(companyId) || freshDb();
-      current.settings = { ...DEFAULT_SETTINGS, ...(result.rows[0].dados.settings || {}) };
-      tenantDbs.set(companyId, current);
-
+      activeDb.settings.managerPin = trimmedPin;
+      saveDb(activeDb);
+      console.log(`[Database] Senha de acesso do restaurante atualizada e salva permanentemente: ${trimmedPin}`);
       return res.json({ success: true, managerPin: trimmedPin });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Erro ao atualizar senha no servidor.' });
@@ -786,61 +804,67 @@ if (totalEmpresas === 0) {
   });
 
   // Dedicated WhatsApp API Settings Update Endpoint
-  app.post('/api/settings/whatsapp', async (req, res) => {
+  app.post('/api/settings/whatsapp', (req, res) => {
     try {
-      const companyId = currentCompanyId();
-      const {
-        whatsappApiUrl,
-        whatsappApiToken,
-        whatsappCustomMessage,
-        autoSendWhatsApp,
-        autoSendMode,
-      } = req.body || {};
-
-      const patch: Record<string, any> = {};
-      if (whatsappApiUrl !== undefined) patch.whatsappApiUrl = String(whatsappApiUrl || '').trim();
-      if (whatsappApiToken !== undefined) patch.whatsappApiToken = String(whatsappApiToken || '').trim();
-      if (whatsappCustomMessage !== undefined) patch.whatsappCustomMessage = String(whatsappCustomMessage || '');
-      if (autoSendWhatsApp !== undefined) patch.autoSendWhatsApp = Boolean(autoSendWhatsApp);
-      if (autoSendMode !== undefined) patch.autoSendMode = autoSendMode;
-
-      const result = await pool.query(
-        `UPDATE avaliacao_empresas
-         SET dados = jsonb_set(
-               COALESCE(dados, '{}'::jsonb),
-               '{settings}',
-               COALESCE(dados->'settings', '{}'::jsonb) || $2::jsonb,
-               true
-             ),
-             atualizado_em = NOW()
-         WHERE empresa_id=$1
-         RETURNING dados`,
-        [companyId, JSON.stringify(patch)]
-      );
-
-      if (!result.rows[0]?.dados) {
-        return res.status(404).json({ error: 'Empresa não encontrada.' });
+      const { whatsappApiUrl, whatsappApiToken, whatsappCustomMessage, autoSendWhatsApp, autoSendMode } = req.body || {};
+      if (whatsappApiUrl !== undefined) {
+        const cleanUrl = String(whatsappApiUrl || '').trim();
+        if (cleanUrl && !cleanUrl.includes('SEU_PHONE_NUMBER_ID')) {
+          activeDb.settings.whatsappApiUrl = cleanUrl;
+        } else if (!activeDb.settings.whatsappApiUrl) {
+          activeDb.settings.whatsappApiUrl = '';
+        }
       }
-
-      const current = tenantDbs.get(companyId) || freshDb();
-      current.settings = { ...DEFAULT_SETTINGS, ...(result.rows[0].dados.settings || {}) };
-      tenantDbs.set(companyId, current);
-
-      console.log(`[PostgreSQL] Configurações de WhatsApp da empresa ${companyId} persistidas.`);
-      return res.json({ success: true });
+      if (whatsappApiToken !== undefined) {
+        const cleanToken = String(whatsappApiToken || '').trim();
+        if (cleanToken) {
+          activeDb.settings.whatsappApiToken = cleanToken;
+        } else if (!activeDb.settings.whatsappApiToken) {
+          activeDb.settings.whatsappApiToken = '';
+        }
+      }
+      if (whatsappCustomMessage !== undefined) {
+        activeDb.settings.whatsappCustomMessage = String(whatsappCustomMessage || '').trim();
+      }
+      if (req.body.whatsappTemplateName !== undefined) {
+        activeDb.settings.whatsappTemplateName = String(req.body.whatsappTemplateName || '').trim();
+      }
+      if (req.body.whatsappTemplateLanguage !== undefined) {
+        activeDb.settings.whatsappTemplateLanguage = String(req.body.whatsappTemplateLanguage || '').trim();
+      }
+      if (autoSendWhatsApp !== undefined) {
+        activeDb.settings.autoSendWhatsApp = Boolean(autoSendWhatsApp);
+      }
+      if (autoSendMode !== undefined) {
+        activeDb.settings.autoSendMode = autoSendMode;
+      }
+      saveDb(activeDb);
+      console.log(`[Database] Configurações de WhatsApp salvas no banco com sucesso (URL: ${activeDb.settings.whatsappApiUrl || 'nenhuma'})`);
+      return res.json({ success: true, settings: activeDb.settings });
     } catch (err: any) {
-      return res.status(500).json({ error: err?.message || 'Erro ao salvar WhatsApp.' });
+      return res.status(500).json({ error: err?.message || 'Erro ao salvar credenciais de WhatsApp no servidor.' });
     }
   });
 
   // Update Rewards
- app.post('/api/rewards', async (req, res) => {
+  app.post('/api/rewards', async (req, res) => {
     try {
-      if (Array.isArray(req.body)) {
-        activeDb.rewards = req.body;
-        await saveDbToPostgres(activeDb);
+      if (!Array.isArray(req.body)) {
+        return res.status(400).json({ error: 'Lista de brindes inválida.' });
       }
-      return res.json({ success: true, rewards: activeDb.rewards });
+      const companyId = currentCompanyId();
+      const result = await pool.query(
+        `UPDATE avaliacao_empresas
+         SET dados=jsonb_set(COALESCE(dados,'{}'::jsonb), '{rewards}', $2::jsonb, true),
+             atualizado_em=NOW()
+         WHERE empresa_id=$1 AND ativo=TRUE
+         RETURNING dados`,
+        [companyId, JSON.stringify(req.body)]
+      );
+      if (!result.rows[0]?.dados) return res.status(404).json({ error: 'Empresa não encontrada.' });
+      const current = tenantDbs.get(companyId)!;
+      current.rewards = req.body;
+      return res.json({ success: true, rewards: current.rewards });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Erro ao salvar brindes.' });
     }
@@ -849,11 +873,22 @@ if (totalEmpresas === 0) {
   // Update Waiters
   app.post('/api/waiters', async (req, res) => {
     try {
-      if (Array.isArray(req.body)) {
-        activeDb.waiters = req.body;
-        await saveDbToPostgres(activeDb);
+      if (!Array.isArray(req.body)) {
+        return res.status(400).json({ error: 'Lista de garçons inválida.' });
       }
-      return res.json({ success: true, waiters: activeDb.waiters });
+      const companyId = currentCompanyId();
+      const result = await pool.query(
+        `UPDATE avaliacao_empresas
+         SET dados=jsonb_set(COALESCE(dados,'{}'::jsonb), '{waiters}', $2::jsonb, true),
+             atualizado_em=NOW()
+         WHERE empresa_id=$1 AND ativo=TRUE
+         RETURNING dados`,
+        [companyId, JSON.stringify(req.body)]
+      );
+      if (!result.rows[0]?.dados) return res.status(404).json({ error: 'Empresa não encontrada.' });
+      const current = tenantDbs.get(companyId)!;
+      current.waiters = req.body;
+      return res.json({ success: true, waiters: current.waiters });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Erro ao salvar garçons.' });
     }
@@ -861,57 +896,65 @@ if (totalEmpresas === 0) {
 
   // Full Database Sync Push (Saves rewards, waiters, settings, reviews atomically)
   app.post('/api/sync/push', async (req, res) => {
+    const client = await pool.connect();
     try {
+      const companyId = currentCompanyId();
       const { settings, rewards, waiters, reviews } = req.body || {};
-      let changed = false;
 
-      if (settings && typeof settings === 'object') {
-        const safeSettings = { ...settings };
-        if (
-          !safeSettings.whatsappApiUrl ||
-          safeSettings.whatsappApiUrl.includes('SEU_PHONE_NUMBER_ID')
-        ) {
-          safeSettings.whatsappApiUrl =
-            activeDb.settings.whatsappApiUrl ||
-            'https://graph.facebook.com/v20.0/1295064457026684/messages';
-        }
-        if (!safeSettings.whatsappApiToken && activeDb.settings.whatsappApiToken) {
-          safeSettings.whatsappApiToken = activeDb.settings.whatsappApiToken;
-        }
-        activeDb.settings = { ...activeDb.settings, ...safeSettings };
-        changed = true;
-      }
-      if (Array.isArray(rewards)) {
-        activeDb.rewards = rewards;
-        changed = true;
-      }
-      if (Array.isArray(waiters)) {
-        activeDb.waiters = waiters;
-        changed = true;
-      }
-      if (Array.isArray(reviews)) {
-        activeDb.reviews = [...reviews].sort(
-          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
-        changed = true;
+      await client.query('BEGIN');
+      const locked = await client.query(
+        'SELECT dados FROM avaliacao_empresas WHERE empresa_id=$1 AND ativo=TRUE FOR UPDATE',
+        [companyId]
+      );
+      if (!locked.rows[0]?.dados) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Empresa não encontrada.' });
       }
 
-      if (changed) {
-        await saveDbToPostgres(activeDb);
-      }
+      const currentData = locked.rows[0].dados || {};
+      const nextData = {
+        ...currentData,
+        settings:
+          settings && typeof settings === 'object'
+            ? { ...(currentData.settings || {}), ...settings }
+            : (currentData.settings || {}),
+        rewards: Array.isArray(rewards) ? rewards : (Array.isArray(currentData.rewards) ? currentData.rewards : []),
+        waiters: Array.isArray(waiters) ? waiters : (Array.isArray(currentData.waiters) ? currentData.waiters : []),
+        reviews: Array.isArray(reviews)
+          ? [...reviews].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+          : (Array.isArray(currentData.reviews) ? currentData.reviews : []),
+      };
+
+      const result = await client.query(
+        `UPDATE avaliacao_empresas
+         SET dados=$2::jsonb,
+             nome=COALESCE(NULLIF($3,''), nome),
+             atualizado_em=NOW()
+         WHERE empresa_id=$1
+         RETURNING dados`,
+        [companyId, JSON.stringify(nextData), String(nextData.settings?.name || '').trim()]
+      );
+      await client.query('COMMIT');
+
+      const persisted = result.rows[0].dados;
+      tenantDbs.set(companyId, {
+        settings: { ...DEFAULT_SETTINGS, ...(persisted.settings || {}) },
+        rewards: Array.isArray(persisted.rewards) ? persisted.rewards : [],
+        waiters: Array.isArray(persisted.waiters) ? persisted.waiters : [],
+        reviews: Array.isArray(persisted.reviews) ? persisted.reviews : [],
+      });
 
       return res.json({
         success: true,
-        message: 'Banco de dados sincronizado e salvo no servidor com sucesso.',
-        counts: {
-          rewards: activeDb.rewards.length,
-          waiters: activeDb.waiters.length,
-          reviews: activeDb.reviews.length,
-        },
+        message: 'PostgreSQL atualizado com merge seguro.',
         timestamp: new Date().toISOString(),
       });
     } catch (err: any) {
+      try { await client.query('ROLLBACK'); } catch {}
+      console.error('[Sync Push] Erro:', err);
       return res.status(500).json({ error: err?.message || 'Erro ao persistir banco de dados.' });
+    } finally {
+      client.release();
     }
   });
 
