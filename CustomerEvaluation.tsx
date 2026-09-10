@@ -374,10 +374,10 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
 
           <div>
             <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
-              Como foi sua experiência hoje?
+              {settings.evaluationTitle || 'Como foi sua experiência hoje?'}
             </h1>
             <p className="text-sm text-stone-300/90 leading-relaxed mt-1.5 max-w-xl">
-              Adoramos ter você aqui! Conte para nós o que achou da sua visita e receba um mimo especial em agradecimento.
+              {settings.evaluationDescription || 'Adoramos ter você aqui! Conte para nós o que achou da sua visita e receba um mimo especial em agradecimento.'}
             </p>
           </div>
         </div>

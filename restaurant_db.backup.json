@@ -13,7 +13,7 @@
     "autoSendMode": "silent_api",
     "managerPin": "2325",
     "whatsappApiUrl": "https://graph.facebook.com/v20.0/1295064457026684/messages",
-    "whatsappApiToken": "",
+    "whatsappApiToken": "EAAM3KZAyByKsBSdZAxJKHSIOjtZCWiZBekRmDUDZCdZAnw6nyGA2sB73fPkNEonNtjKuEHQSMZAcOBLnWmvrP5YFU4o3dCf6ACZB4aRWoaBPnPP6D8FvWclHFyfMQ7DPK1o7JDsIdaiAKPbZBzpJYUW6ZBlqwH3v3l6cSMO5WRSJpQCIWHYuQv9SL3OcZBVOB5sVDzIoQZDZD",
     "whatsappCustomMessage": "",
     "whatsappTemplateName": "hello_world",
     "whatsappTemplateLanguage": "pt_BR",

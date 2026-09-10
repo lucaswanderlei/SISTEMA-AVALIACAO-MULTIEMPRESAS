@@ -2383,8 +2383,32 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
               </div>
             </div>
             <div>
-              <label className="block text-xs font-semibold text-stone-700 mb-1">URL da logomarca</label>
-              <input type="url" value={settings.logoUrl || ''} onChange={(e) => onUpdateSettings({ ...settings, logoUrl: e.target.value })} placeholder="https://.../logo.png" className="w-full text-xs p-2.5 rounded-xl border border-stone-200 focus:border-rose-500 outline-none" />
+              <label className="block text-xs font-semibold text-stone-700 mb-1">Cor do destaque / cabeçalho</label>
+              <div className="flex gap-2 items-center">
+                <input type="color" value={settings.secondaryColor || '#7f1d1d'} onChange={(e) => onUpdateSettings({ ...settings, secondaryColor: e.target.value })} className="h-10 w-14 rounded-lg border border-stone-200 p-1 bg-white" />
+                <input type="text" value={settings.secondaryColor || '#7f1d1d'} onChange={(e) => onUpdateSettings({ ...settings, secondaryColor: e.target.value })} className="flex-1 text-xs p-2.5 rounded-xl border border-stone-200 focus:border-rose-500 outline-none font-mono" />
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-stone-700 mb-1">URL da logomarca</label>
+            <input type="url" value={settings.logoUrl || ''} onChange={(e) => onUpdateSettings({ ...settings, logoUrl: e.target.value })} placeholder="https://.../logo.png" className="w-full text-xs p-2.5 rounded-xl border border-stone-200 focus:border-rose-500 outline-none" />
+            {settings.logoUrl && <div className="mt-2 flex items-center gap-2"><img src={settings.logoUrl} alt="Prévia da logo" className="w-12 h-12 rounded-xl object-cover border border-stone-200"/><span className="text-[11px] text-stone-400">Prévia da logomarca</span></div>}
+          </div>
+
+          <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4 space-y-3">
+            <div>
+              <h4 className="text-xs font-black text-stone-800">Texto da página de avaliação</h4>
+              <p className="text-[11px] text-stone-500">Cada empresa pode usar sua própria chamada para os clientes.</p>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-stone-700 mb-1">Título</label>
+              <input type="text" value={settings.evaluationTitle || 'Como foi sua experiência hoje?'} onChange={(e) => onUpdateSettings({ ...settings, evaluationTitle: e.target.value })} className="w-full text-xs p-2.5 rounded-xl border border-stone-200 focus:border-rose-500 outline-none" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-stone-700 mb-1">Descrição</label>
+              <textarea rows={3} value={settings.evaluationDescription || 'Adoramos ter você aqui! Conte para nós o que achou da sua visita e receba um mimo especial em agradecimento.'} onChange={(e) => onUpdateSettings({ ...settings, evaluationDescription: e.target.value })} className="w-full text-xs p-2.5 rounded-xl border border-stone-200 focus:border-rose-500 outline-none resize-y" />
             </div>
           </div>
 
