@@ -773,7 +773,7 @@ if (totalEmpresas === 0) {
   });
 
   // Update Rewards
-  app.post('/api/rewards', (req, res) => {
+ app.post('/api/rewards', async (req, res) => {
     try {
       if (Array.isArray(req.body)) {
         activeDb.rewards = req.body;
@@ -786,7 +786,7 @@ if (totalEmpresas === 0) {
   });
 
   // Update Waiters
-  app.post('/api/waiters', (req, res) => {
+  app.post('/api/waiters', async (req, res) => {
     try {
       if (Array.isArray(req.body)) {
         activeDb.waiters = req.body;
