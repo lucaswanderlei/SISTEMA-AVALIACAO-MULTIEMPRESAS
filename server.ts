@@ -265,23 +265,27 @@ function loadDb(): RestaurantDb {
 const postgresSaveQueues = new Map<string, Promise<void>>();
 async function saveDbToPostgres(db: RestaurantDb): Promise<void> {
   const empresaId = currentCompanyId();
-  // Snapshot now: later UI/API mutations cannot change what this save represents.
   const snapshot = JSON.stringify(db);
   const nome = db.settings?.name || empresaId;
+
   const previous = postgresSaveQueues.get(empresaId) || Promise.resolve();
   const queued = previous.catch(() => {}).then(async () => {
     await pool.query(
       `INSERT INTO avaliacao_empresas (empresa_id, nome, slug, dados, atualizado_em)
        VALUES ($1, $2, $1, $3::jsonb, NOW())
-       ON CONFLICT (empresa_id) DO UPDATE SET dados=EXCLUDED.dados, nome=EXCLUDED.nome, atualizado_em=NOW()`,
+       ON CONFLICT (empresa_id)
+       DO UPDATE SET dados=EXCLUDED.dados, nome=EXCLUDED.nome, atualizado_em=NOW()`,
       [empresaId, nome, snapshot]
     );
-    console.log(`[PostgreSQL] Dados da empresa ${empresaId} salvos.`);
-  }).catch((error) => {
-    console.error('[PostgreSQL] Erro ao salvar dados multiempresa:', error);
+    console.log(`[PostgreSQL] Persistência confirmada para empresa ${empresaId}.`);
   });
+
   postgresSaveQueues.set(empresaId, queued);
-  await queued;
+  try {
+    await queued;
+  } finally {
+    if (postgresSaveQueues.get(empresaId) === queued) postgresSaveQueues.delete(empresaId);
+  }
 }
 function saveDb(db: RestaurantDb): void {
   try {
@@ -425,7 +429,8 @@ if (!carregouPostgres) {
   });
   const PORT = process.env.NODE_ENV === 'production' ? 3000 : 3001;
 
-  app.use(express.json({ limit: '5mb' }));
+  app.use(express.json({ limit: '10mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
   // Administração geral multiempresa. Proteja com SUPER_ADMIN_KEY no Render.
   function requireSuperAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
@@ -558,6 +563,14 @@ if (!carregouPostgres) {
       saveDb(activeDb);
       console.log(`[Central Sync] Nova avaliação sincronizada! Mesa #${review.tableNumber || 'Salão'} • Cliente: ${review.customerName || 'Anônimo'} • Código: ${review.rewardCode}`);
 
+      // Persist to Firestore
+      try {
+        const cleaned = sanitizeObj(review);
+        await setDoc(doc(firestoreDb, 'companies', currentCompanyId(), 'reviews', review.id), cleaned, { merge: true });
+      } catch (fErr) {
+        console.warn('[Firestore Sync] Aviso ao salvar review no Firestore:', fErr);
+      }
+
       return res.json({
         success: true,
         review,
@@ -603,6 +616,21 @@ if (!carregouPostgres) {
       saveDb(activeDb);
       console.log(`[Central Sync] Voucher ${cleanCode} VALIDADO com sucesso para ${review.customerName || 'Cliente'}!`);
 
+      // Persist to Firestore
+      try {
+        await setDoc(
+          doc(firestoreDb, 'companies', currentCompanyId(), 'reviews', review.id),
+          {
+            rewardClaimed: true,
+            claimedAt: review.claimedAt,
+            claimedTable: review.claimedTable || null,
+          },
+          { merge: true }
+        );
+      } catch (fErr) {
+        console.warn('[Firestore Sync] Aviso ao validar no Firestore:', fErr);
+      }
+
       return res.json({
         success: true,
         review,
@@ -626,6 +654,14 @@ if (!carregouPostgres) {
       saveDb(activeDb);
       console.log(`[Central Sync] Avaliação ${id} removida do servidor. Antes: ${beforeCount}, Agora: ${activeDb.reviews.length}`);
 
+      // Delete from Firestore directly
+      try {
+        await deleteDoc(doc(firestoreDb, 'companies', currentCompanyId(), 'reviews', id));
+        console.log(`[Firestore Sync] Avaliação ${id} excluída do Firestore.`);
+      } catch (fErr) {
+        console.warn(`[Firestore Sync] Aviso ao excluir review ${id} do Firestore:`, fErr);
+      }
+
       return res.json({
         success: true,
         deletedId: id,
@@ -645,6 +681,19 @@ if (!carregouPostgres) {
       saveDb(activeDb);
       console.log('[Central Sync] Todas as avaliações foram limpas do servidor.');
 
+      // Also delete from Firestore
+      try {
+        const snap = await getDocs(collection(firestoreDb, 'companies', currentCompanyId(), 'reviews'));
+        const deletePromises: Promise<any>[] = [];
+        snap.forEach((d) => {
+          deletePromises.push(deleteDoc(d.ref));
+        });
+        await Promise.all(deletePromises);
+        console.log(`[Firestore Sync] Todas as ${deletePromises.length} avaliações foram limpas do Firestore.`);
+      } catch (fErr) {
+        console.warn('[Firestore Sync] Aviso ao limpar avaliações do Firestore:', fErr);
+      }
+
       return res.json({ success: true, reviews: [] });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Erro ao limpar avaliações.' });
@@ -654,24 +703,36 @@ if (!carregouPostgres) {
   // Update Settings
   app.post('/api/settings', async (req, res) => {
     try {
-      activeDb.settings = { ...activeDb.settings, ...req.body };
-      try {
-        if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-        const content = JSON.stringify(activeDb, null, 2);
-        fs.writeFileSync(DB_FILE, content, 'utf-8');
-        try { fs.writeFileSync(DB_BACKUP_FILE, content, 'utf-8'); } catch {}
-      } catch (fileErr) {
-        console.warn('[Database] Falha ao gravar cópia local:', fileErr);
-      }
-      await saveDbToPostgres(activeDb);
-      return res.json({ success: true, settings: activeDb.settings });
+      const companyId = currentCompanyId();
+      const current = tenantDbs.get(companyId) || freshDb();
+      const incoming = req.body && typeof req.body === 'object' ? req.body : {};
+
+      current.settings = { ...current.settings, ...incoming };
+      tenantDbs.set(companyId, current);
+
+      await saveDbToPostgres(current);
+
+      const check = await pool.query(
+        'SELECT dados FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1',
+        [companyId]
+      );
+      const persistedSettings = check.rows[0]?.dados?.settings || current.settings;
+
+      tenantDbs.set(companyId, {
+        ...current,
+        settings: { ...DEFAULT_SETTINGS, ...persistedSettings },
+      });
+
+      return res.json({ success: true, settings: persistedSettings, persisted: true });
     } catch (err: any) {
-      console.error('[Settings] Erro ao salvar configurações:', err);
-      return res.status(500).json({ error: err?.message || 'Erro ao salvar configurações.' });
+      console.error('[Settings] Falha de persistência:', err);
+      return res.status(500).json({
+        success: false,
+        error: err?.message || 'Erro ao salvar configurações no PostgreSQL.',
+      });
     }
   });
 
-  // Dedicated PIN Update Endpoint
   app.post('/api/settings/pin', (req, res) => {
     try {
       const { pin } = req.body || {};
@@ -758,7 +819,7 @@ if (!carregouPostgres) {
   });
 
   // Full Database Sync Push (Saves rewards, waiters, settings, reviews atomically)
-  app.post('/api/sync/push', (req, res) => {
+  app.post('/api/sync/push', async (req, res) => {
     try {
       const { settings, rewards, waiters, reviews } = req.body || {};
       let changed = false;
@@ -795,7 +856,7 @@ if (!carregouPostgres) {
       }
 
       if (changed) {
-        saveDb(activeDb);
+        await saveDbToPostgres(activeDb);
       }
 
       return res.json({
