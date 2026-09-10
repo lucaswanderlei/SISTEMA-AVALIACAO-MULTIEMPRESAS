@@ -263,8 +263,7 @@ function loadDb(): RestaurantDb {
   };
 }
 const postgresSaveQueues = new Map<string, Promise<void>>();
-async function saveDbToPostgres(db: RestaurantDb): Promise<void> {
-  const empresaId = currentCompanyId();
+async function saveDbToPostgres(db: RestaurantDb, empresaId = currentCompanyId()): Promise<void> {
   // Snapshot now: later UI/API mutations cannot change what this save represents.
   const snapshot = JSON.stringify(db);
   const nome = db.settings?.name || empresaId;
@@ -284,6 +283,7 @@ async function saveDbToPostgres(db: RestaurantDb): Promise<void> {
   await queued;
 }
 function saveDb(db: RestaurantDb): void {
+  const empresaId = currentCompanyId();
   try {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -294,7 +294,7 @@ function saveDb(db: RestaurantDb): void {
       fs.writeFileSync(DB_BACKUP_FILE, content, 'utf-8');
     } catch {}
     console.log(`[Database] Salvo com sucesso (${db.rewards.length} brindes, ${db.waiters.length} garçons, ${db.reviews.length} avaliações)`);
-    void saveDbToPostgres(db);
+    void saveDbToPostgres(db, empresaId);
   } catch (err) {
     console.error('Error writing DB_FILE:', err);
   }
@@ -696,10 +696,13 @@ if (!carregouPostgres) {
   });
 
   // Update Settings
-  app.post('/api/settings', (req, res) => {
+  app.post('/api/settings', async (req, res) => {
     try {
+      const empresaId = currentCompanyId();
       activeDb.settings = { ...activeDb.settings, ...req.body };
-      saveDb(activeDb);
+      // Confirma no PostgreSQL antes de responder. Isso evita perder logo, cores,
+      // ícone e destaques se a instância reiniciar logo após a alteração.
+      await saveDbToPostgres(activeDb, empresaId);
       return res.json({ success: true, settings: activeDb.settings });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Erro ao salvar configurações.' });
