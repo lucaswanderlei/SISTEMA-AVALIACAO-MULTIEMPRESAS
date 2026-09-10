@@ -36,6 +36,10 @@ import {
   Eye,
   EyeOff,
   Info,
+  FileText,
+  Lightbulb,
+  Printer,
+  CalendarRange,
 } from 'lucide-react';
 import { RestaurantSettings, RewardOption, Review, Waiter } from '../types';
 import { CustomerDatabaseView } from './CustomerDatabaseView';
@@ -97,7 +101,7 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
 }) => {
   // Tabs within dashboard
   const [activeTab, setActiveTab] = useState<
-    'metrics' | 'reviews' | 'customers' | 'waiters' | 'validator' | 'rewards' | 'settings'
+    'metrics' | 'reviews' | 'customers' | 'waiters' | 'validator' | 'rewards' | 'reports' | 'settings'
   >(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -105,6 +109,245 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
     }
     return 'metrics';
   });
+
+
+  const [reportPeriod, setReportPeriod] = useState<'today' | '7d' | '30d' | 'all'>('30d');
+
+  const reportReviews = useMemo(() => {
+    const now = new Date();
+    return reviews.filter((review) => {
+      if (reportPeriod === 'all') return true;
+      const created = new Date(review.createdAt);
+      if (Number.isNaN(created.getTime())) return false;
+
+      if (reportPeriod === 'today') {
+        return created.toDateString() === now.toDateString();
+      }
+
+      const days = reportPeriod === '7d' ? 7 : 30;
+      const cutoff = new Date(now);
+      cutoff.setDate(cutoff.getDate() - days);
+      return created >= cutoff;
+    });
+  }, [reviews, reportPeriod]);
+
+  const reportData = useMemo(() => {
+    const total = reportReviews.length;
+    const empty = {
+      total: 0,
+      avgOverall: 0,
+      avgService: 0,
+      avgAmbiance: 0,
+      avgProducts: 0,
+      avgWaitTime: 0,
+      critics: 0,
+      suggestionsCount: 0,
+      claimed: 0,
+      tagRanking: [] as Array<[string, number]>,
+      waiterRanking: [] as Array<{ name: string; avg: number; count: number }>,
+      rewardRanking: [] as Array<[string, number]>,
+      scoreDistribution: [] as Array<[number, number]>,
+    };
+    if (!total) return empty;
+
+    const sums = { service: 0, ambiance: 0, products: 0, waitTime: 0 };
+    const tagMap: Record<string, number> = {};
+    const waiterMap: Record<string, { sum: number; count: number }> = {};
+    const rewardMap: Record<string, number> = {};
+    const dist: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    let critics = 0;
+    let suggestionsCount = 0;
+    let claimed = 0;
+
+    reportReviews.forEach((r) => {
+      sums.service += Number(r.ratings?.service || 0);
+      sums.ambiance += Number(r.ratings?.ambiance || 0);
+      sums.products += Number(r.ratings?.products || 0);
+      sums.waitTime += Number(r.ratings?.waitTime || 0);
+
+      const overall =
+        (Number(r.ratings?.service || 0) +
+          Number(r.ratings?.ambiance || 0) +
+          Number(r.ratings?.products || 0) +
+          Number(r.ratings?.waitTime || 0)) /
+        4;
+      const rounded = Math.max(1, Math.min(5, Math.round(overall)));
+      dist[rounded] = (dist[rounded] || 0) + 1;
+
+      (r.quickTags || []).forEach((tag) => {
+        if (tag?.trim()) tagMap[tag.trim()] = (tagMap[tag.trim()] || 0) + 1;
+      });
+
+      if (r.waiterName && typeof r.waiterRating === 'number' && r.waiterRating > 0) {
+        const current = waiterMap[r.waiterName] || { sum: 0, count: 0 };
+        current.sum += r.waiterRating;
+        current.count += 1;
+        waiterMap[r.waiterName] = current;
+      }
+
+      if (r.rewardTitle) rewardMap[r.rewardTitle] = (rewardMap[r.rewardTitle] || 0) + 1;
+      if (r.criticism?.trim()) critics++;
+      if (r.suggestion?.trim()) suggestionsCount++;
+      if (r.rewardClaimed) claimed++;
+    });
+
+    const avgService = sums.service / total;
+    const avgAmbiance = sums.ambiance / total;
+    const avgProducts = sums.products / total;
+    const avgWaitTime = sums.waitTime / total;
+    const avgOverall = (avgService + avgAmbiance + avgProducts + avgWaitTime) / 4;
+
+    return {
+      total,
+      avgOverall: Number(avgOverall.toFixed(2)),
+      avgService: Number(avgService.toFixed(2)),
+      avgAmbiance: Number(avgAmbiance.toFixed(2)),
+      avgProducts: Number(avgProducts.toFixed(2)),
+      avgWaitTime: Number(avgWaitTime.toFixed(2)),
+      critics,
+      suggestionsCount,
+      claimed,
+      tagRanking: Object.entries(tagMap).sort((a, b) => b[1] - a[1]).slice(0, 10),
+      waiterRanking: Object.entries(waiterMap)
+        .map(([name, data]) => ({ name, avg: Number((data.sum / data.count).toFixed(2)), count: data.count }))
+        .sort((a, b) => b.avg - a.avg || b.count - a.count)
+        .slice(0, 10),
+      rewardRanking: Object.entries(rewardMap).sort((a, b) => b[1] - a[1]).slice(0, 10),
+      scoreDistribution: Object.entries(dist)
+        .map(([score, count]) => [Number(score), count] as [number, number])
+        .sort((a, b) => a[0] - b[0]),
+    };
+  }, [reportReviews]);
+
+  const reportSuggestions = useMemo(() => {
+    if (!reportData.total) {
+      return ['Ainda não há avaliações suficientes neste período para gerar sugestões.'];
+    }
+
+    const items: string[] = [];
+    const pillars = [
+      { label: 'Atendimento', value: reportData.avgService },
+      { label: 'Ambiente', value: reportData.avgAmbiance },
+      { label: 'Produtos', value: reportData.avgProducts },
+      { label: 'Tempo de espera', value: reportData.avgWaitTime },
+    ].sort((a, b) => a.value - b.value);
+
+    const weakest = pillars[0];
+    const strongest = pillars[pillars.length - 1];
+
+    if (weakest.value < 4) {
+      items.push(
+        `${weakest.label} é o pilar com menor média (${weakest.value.toFixed(1)}/5). Priorize ações nesse ponto e acompanhe a evolução semanalmente.`
+      );
+    } else {
+      items.push(
+        `Todos os pilares estão com média próxima ou acima de 4. O melhor desempenho é ${strongest.label} (${strongest.value.toFixed(1)}/5).`
+      );
+    }
+
+    if (reportData.critics > 0) {
+      items.push(
+        `${reportData.critics} avaliação(ões) possuem crítica escrita. Vale revisar esses comentários individualmente e agrupar causas recorrentes.`
+      );
+    }
+
+    const negativeTags = reportData.tagRanking.filter(([tag]) =>
+      /(demora|movimentado|ruim|frio|sujo|lento|erro|problema|conta)/i.test(tag)
+    );
+    if (negativeTags[0]) {
+      const [tag, count] = negativeTags[0];
+      const percent = Math.round((count / reportData.total) * 100);
+      items.push(`"${tag}" apareceu ${count} vez(es), equivalente a aproximadamente ${percent}% das avaliações do período.`);
+    }
+
+    if (reportData.waiterRanking[0]) {
+      const w = reportData.waiterRanking[0];
+      items.push(
+        `${w.name} lidera entre os atendentes avaliados, com média ${w.avg.toFixed(1)}/5 em ${w.count} avaliação(ões). Use os pontos fortes desse atendimento como referência para a equipe.`
+      );
+    }
+
+    const lowScores = reportData.scoreDistribution
+      .filter(([score]) => score <= 3)
+      .reduce((sum, [, count]) => sum + count, 0);
+    const lowPercent = Math.round((lowScores / reportData.total) * 100);
+    if (lowPercent >= 20) {
+      items.push(`${lowPercent}% das avaliações ficaram em até 3 estrelas. Recomenda-se tratar primeiro os motivos mais repetidos antes de ampliar campanhas de aquisição.`);
+    }
+
+    if (reportData.claimed > 0) {
+      const claimRate = Math.round((reportData.claimed / reportData.total) * 100);
+      items.push(`A taxa de resgate de brindes no período é de aproximadamente ${claimRate}%. Compare esse indicador com retorno de clientes para medir o efeito da campanha.`);
+    }
+
+    return items.slice(0, 6);
+  }, [reportData]);
+
+  const reportPeriodLabel =
+    reportPeriod === 'today' ? 'Hoje' :
+    reportPeriod === '7d' ? 'Últimos 7 dias' :
+    reportPeriod === '30d' ? 'Últimos 30 dias' : 'Todo o período';
+
+  const printReport = (detailed: boolean) => {
+    const escapeHtml = (value: unknown) =>
+      String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+
+    const rows = detailed
+      ? reportReviews.map((r) => {
+          const overall = (
+            Number(r.ratings?.service || 0) +
+            Number(r.ratings?.ambiance || 0) +
+            Number(r.ratings?.products || 0) +
+            Number(r.ratings?.waitTime || 0)
+          ) / 4;
+          return `<tr>
+            <td>${escapeHtml(new Date(r.createdAt).toLocaleString('pt-BR'))}</td>
+            <td>${escapeHtml(r.tableNumber ? `Mesa ${r.tableNumber}` : 'Balcão/Viagem')}</td>
+            <td>${escapeHtml(r.customerName || 'Não informado')}</td>
+            <td>${overall.toFixed(1)}</td>
+            <td>${escapeHtml((r.quickTags || []).join(', ') || '-')}</td>
+            <td>${escapeHtml(r.waiterName || '-')}</td>
+            <td>${escapeHtml(r.criticism || '-')}</td>
+            <td>${escapeHtml(r.suggestion || '-')}</td>
+            <td>${escapeHtml(r.rewardTitle || '-')}</td>
+          </tr>`;
+        }).join('')
+      : '';
+
+    const popup = window.open('', '_blank', 'width=1200,height=850');
+    if (!popup) return;
+
+    popup.document.write(`<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"/>
+<title>${detailed ? 'Relatório detalhado' : 'Relatório resumido'} - ${escapeHtml(settings.name)}</title>
+<style>
+body{font-family:Arial,sans-serif;color:#222;margin:32px}.header{border-bottom:3px solid #111;padding-bottom:14px;margin-bottom:22px}
+h1{margin:0 0 4px;font-size:26px}h2{margin-top:28px;font-size:18px}.muted{color:#666;font-size:12px}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.card{border:1px solid #ddd;border-radius:10px;padding:12px}.big{font-size:24px;font-weight:700}
+table{width:100%;border-collapse:collapse;font-size:11px;margin-top:12px}th,td{border:1px solid #ddd;padding:7px;text-align:left;vertical-align:top}th{background:#f4f4f4}
+ul{padding-left:20px}li{margin:8px 0}@media print{button{display:none}body{margin:14mm}.grid{grid-template-columns:repeat(4,1fr)}}
+</style></head><body>
+<div class="header"><h1>${detailed ? 'Relatório Detalhado' : 'Relatório Resumido'}</h1>
+<div>${escapeHtml(settings.name)}</div><div class="muted">${escapeHtml(reportPeriodLabel)} · Gerado em ${new Date().toLocaleString('pt-BR')}</div></div>
+<div class="grid">
+<div class="card"><div class="muted">Avaliações</div><div class="big">${reportData.total}</div></div>
+<div class="card"><div class="muted">Nota geral</div><div class="big">${reportData.avgOverall.toFixed(1)}/5</div></div>
+<div class="card"><div class="muted">Críticas escritas</div><div class="big">${reportData.critics}</div></div>
+<div class="card"><div class="muted">Brindes resgatados</div><div class="big">${reportData.claimed}</div></div>
+</div>
+<h2>Médias por pilar</h2>
+<p>Atendimento: <strong>${reportData.avgService.toFixed(1)}</strong> · Ambiente: <strong>${reportData.avgAmbiance.toFixed(1)}</strong> · Produtos: <strong>${reportData.avgProducts.toFixed(1)}</strong> · Tempo de espera: <strong>${reportData.avgWaitTime.toFixed(1)}</strong></p>
+<h2>Destaques mais marcados</h2><ul>${reportData.tagRanking.slice(0, 8).map(([tag,c]) => `<li>${escapeHtml(tag)} — ${c}</li>`).join('') || '<li>Sem dados</li>'}</ul>
+<h2>Sugestões do sistema</h2><ul>${reportSuggestions.map((s) => `<li>${escapeHtml(s)}</li>`).join('')}</ul>
+${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th>Mesa</th><th>Cliente</th><th>Nota</th><th>Destaques</th><th>Atendente</th><th>Crítica</th><th>Sugestão</th><th>Brinde</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
+<script>window.onload=()=>setTimeout(()=>window.print(),250)</script></body></html>`);
+    popup.document.close();
+  };
 
   const quickTagsOptions =
     Array.isArray(settings.quickTagsOptions)
@@ -905,6 +1148,19 @@ return (
         >
           <Gift className="w-4 h-4" />
           <span>Gerenciar Brindes</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('reports')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition ${
+            activeTab === 'reports'
+              ? 'bg-rose-600 text-white shadow-md shadow-rose-200'
+              : 'text-stone-600 hover:bg-stone-100 hover:text-stone-900'
+          }`}
+        >
+          <FileText className="w-4 h-4" />
+          <span>Relatórios & Sugestões</span>
         </button>
 
         <button
@@ -2389,6 +2645,164 @@ return (
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+
+      {/* TAB: REPORTS & SUGGESTIONS */}
+      {activeTab === 'reports' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-5">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <FileText className="w-5 h-5 text-rose-600" />
+                  <h2 className="text-lg font-black text-stone-900">Relatórios do Restaurante</h2>
+                </div>
+                <p className="text-xs text-stone-500 mt-1">
+                  Resumo gerencial, relatório detalhado e sugestões automáticas com base nas avaliações desta empresa.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-2 border border-stone-200 rounded-xl px-3 py-2 bg-stone-50">
+                  <CalendarRange className="w-4 h-4 text-stone-500" />
+                  <select
+                    value={reportPeriod}
+                    onChange={(e) => setReportPeriod(e.target.value as 'today' | '7d' | '30d' | 'all')}
+                    className="bg-transparent text-xs font-bold text-stone-700 outline-none"
+                  >
+                    <option value="today">Hoje</option>
+                    <option value="7d">Últimos 7 dias</option>
+                    <option value="30d">Últimos 30 dias</option>
+                    <option value="all">Todo o período</option>
+                  </select>
+                </div>
+                <button type="button" onClick={() => printReport(false)} className="inline-flex items-center gap-2 rounded-xl bg-stone-900 text-white px-4 py-2.5 text-xs font-bold hover:bg-stone-800">
+                  <Printer className="w-4 h-4" /> Relatório resumido
+                </button>
+                <button type="button" onClick={() => printReport(true)} className="inline-flex items-center gap-2 rounded-xl bg-rose-600 text-white px-4 py-2.5 text-xs font-bold hover:bg-rose-700">
+                  <Printer className="w-4 h-4" /> Relatório detalhado
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white rounded-2xl border border-stone-200 p-5 shadow-sm">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-stone-500">Avaliações</p>
+              <p className="text-3xl font-black text-stone-900 mt-1">{reportData.total}</p>
+              <p className="text-xs text-stone-400 mt-1">{reportPeriodLabel}</p>
+            </div>
+            <div className="bg-white rounded-2xl border border-stone-200 p-5 shadow-sm">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-stone-500">Nota geral</p>
+              <p className="text-3xl font-black text-stone-900 mt-1">{reportData.avgOverall.toFixed(1)}</p>
+              <p className="text-xs text-stone-400 mt-1">de 5,0</p>
+            </div>
+            <div className="bg-white rounded-2xl border border-stone-200 p-5 shadow-sm">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-stone-500">Críticas</p>
+              <p className="text-3xl font-black text-stone-900 mt-1">{reportData.critics}</p>
+              <p className="text-xs text-stone-400 mt-1">comentários críticos</p>
+            </div>
+            <div className="bg-white rounded-2xl border border-stone-200 p-5 shadow-sm">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-stone-500">Brindes resgatados</p>
+              <p className="text-3xl font-black text-stone-900 mt-1">{reportData.claimed}</p>
+              <p className="text-xs text-stone-400 mt-1">no período</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+            <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-5">
+              <h3 className="font-black text-stone-900 mb-4">Média por pilar</h3>
+              <div className="space-y-4">
+                {[
+                  ['Atendimento', reportData.avgService],
+                  ['Ambiente', reportData.avgAmbiance],
+                  ['Produtos', reportData.avgProducts],
+                  ['Tempo de espera', reportData.avgWaitTime],
+                ].map(([label, value]) => (
+                  <div key={String(label)}>
+                    <div className="flex justify-between text-xs font-bold mb-1">
+                      <span>{label}</span><span>{Number(value).toFixed(1)}/5</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-stone-100 overflow-hidden">
+                      <div className="h-full bg-rose-500 rounded-full" style={{ width: `${Math.max(0, Math.min(100, Number(value) * 20))}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-5">
+              <h3 className="font-black text-stone-900 mb-4">Destaques mais marcados</h3>
+              {reportData.tagRanking.length === 0 ? (
+                <p className="text-xs text-stone-500">Nenhum destaque marcado no período.</p>
+              ) : (
+                <div className="space-y-2">
+                  {reportData.tagRanking.slice(0, 8).map(([tag, count], index) => (
+                    <div key={tag} className="flex items-center justify-between rounded-xl bg-stone-50 px-3 py-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="w-6 h-6 rounded-full bg-stone-900 text-white flex items-center justify-center text-[10px] font-black">{index + 1}</span>
+                        <span className="text-xs font-semibold text-stone-700 truncate">{tag}</span>
+                      </div>
+                      <span className="text-xs font-black text-stone-900">{count}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-amber-200 shadow-sm p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center">
+                <Lightbulb className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-black text-stone-900">Sugestões automáticas</h3>
+                <p className="text-xs text-stone-500">Geradas a partir dos resultados do período selecionado.</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              {reportSuggestions.map((suggestion, index) => (
+                <div key={`${suggestion}-${index}`} className="rounded-xl border border-amber-100 bg-amber-50/60 p-4 text-sm text-stone-700 leading-relaxed">
+                  <span className="font-black text-amber-700 mr-2">{index + 1}.</span>{suggestion}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+            <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-5">
+              <h3 className="font-black text-stone-900 mb-4">Atendentes melhor avaliados</h3>
+              {reportData.waiterRanking.length === 0 ? (
+                <p className="text-xs text-stone-500">Sem avaliações de atendentes neste período.</p>
+              ) : reportData.waiterRanking.slice(0, 5).map((item, index) => (
+                <div key={item.name} className="flex items-center justify-between py-2 border-b border-stone-100 last:border-0">
+                  <span className="text-sm font-semibold">{index + 1}. {item.name}</span>
+                  <span className="text-xs font-black">{item.avg.toFixed(1)}/5 · {item.count} avaliações</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-5">
+              <h3 className="font-black text-stone-900 mb-4">Brindes mais sorteados</h3>
+              {reportData.rewardRanking.length === 0 ? (
+                <p className="text-xs text-stone-500">Sem brindes registrados neste período.</p>
+              ) : reportData.rewardRanking.slice(0, 5).map(([reward, count], index) => (
+                <div key={reward} className="flex items-center justify-between py-2 border-b border-stone-100 last:border-0">
+                  <span className="text-sm font-semibold">{index + 1}. {reward}</span>
+                  <span className="text-xs font-black">{count} vez(es)</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-stone-900 text-white rounded-2xl p-5">
+            <h3 className="font-black">PDF e impressão</h3>
+            <p className="text-xs text-stone-300 mt-1 max-w-3xl">
+              Os botões “Relatório resumido” e “Relatório detalhado” abrem uma versão própria para impressão. Na janela de impressão do navegador, escolha “Salvar como PDF” para gerar o arquivo.
+            </p>
           </div>
         </div>
       )}
