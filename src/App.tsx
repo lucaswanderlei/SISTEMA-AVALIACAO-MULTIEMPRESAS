@@ -178,132 +178,53 @@ export default function App() {
     }
   }, []);
 
-  // 1. Initial Load: Synchronize from Central Server (ensuring local customizations are preserved and synced)
+  // 1. Initial Load: PostgreSQL is authoritative.
+  // Never push local defaults back to the server during boot.
   useEffect(() => {
     let isMounted = true;
+
     apiFetchSync()
       .then((syncData) => {
         if (!isMounted || !syncData) return;
 
-        // Settings sync: ensure custom PIN and WhatsApp API settings are protected and synced
         if (syncData.settings) {
-          const localSettings = loadSettings();
-          const localSavedPin = loadSavedPin();
-          const localWhatsApp = loadWhatsAppConfig();
+          const serverSettings = syncData.settings as RestaurantSettings;
+          setSettings(serverSettings);
+          saveSettings(serverSettings);
 
-          let effectivePin = syncData.settings.managerPin || '1234';
-          if (localSavedPin && localSavedPin !== '1234' && (!syncData.settings.managerPin || syncData.settings.managerPin === '1234')) {
-            effectivePin = localSavedPin;
-            apiUpdatePin(effectivePin).catch(() => {});
-          } else if (localSettings.managerPin && localSettings.managerPin !== '1234' && (!syncData.settings.managerPin || syncData.settings.managerPin === '1234')) {
-            effectivePin = localSettings.managerPin;
-            apiUpdatePin(effectivePin).catch(() => {});
-          }
-
-          // WhatsApp API persistence merge - credentials are always tenant-specific.
-          const effectiveWhatsAppUrl = syncData.settings.whatsappApiUrl || localWhatsApp?.whatsappApiUrl || localSettings.whatsappApiUrl || '';
-          const effectiveWhatsAppToken = syncData.settings.whatsappApiToken || localWhatsApp?.whatsappApiToken || localSettings.whatsappApiToken || '';
-          const effectiveWhatsAppMessage = syncData.settings.whatsappCustomMessage || localWhatsApp?.whatsappCustomMessage || localSettings.whatsappCustomMessage || '';
-
-          // If local or server had incomplete WhatsApp credentials, sync the official Meta Cloud API to the server
-          if ((effectiveWhatsAppUrl || effectiveWhatsAppToken) && (!syncData.settings.whatsappApiUrl || !syncData.settings.whatsappApiToken)) {
-            apiSaveWhatsAppSettings({
-              whatsappApiUrl: effectiveWhatsAppUrl,
-              whatsappApiToken: effectiveWhatsAppToken,
-              whatsappCustomMessage: effectiveWhatsAppMessage,
-              autoSendWhatsApp: syncData.settings.autoSendWhatsApp ?? localSettings.autoSendWhatsApp ?? true,
-              autoSendMode: syncData.settings.autoSendMode ?? localSettings.autoSendMode ?? 'silent_api',
-            }).catch(() => {});
-          }
-
-          const mergedSettings: RestaurantSettings = {
-            ...syncData.settings,
-            managerPin: effectivePin,
-            whatsappApiUrl: effectiveWhatsAppUrl,
-            whatsappApiToken: effectiveWhatsAppToken,
-            whatsappCustomMessage: effectiveWhatsAppMessage,
-          };
-          setSettings(mergedSettings);
-          saveSettings(mergedSettings);
-          savePin(effectivePin);
+          if (serverSettings.managerPin) savePin(serverSettings.managerPin);
           saveWhatsAppConfig({
-            whatsappApiUrl: effectiveWhatsAppUrl,
-            whatsappApiToken: effectiveWhatsAppToken,
-            whatsappCustomMessage: effectiveWhatsAppMessage,
+            whatsappApiUrl: serverSettings.whatsappApiUrl,
+            whatsappApiToken: serverSettings.whatsappApiToken,
+            whatsappCustomMessage: serverSettings.whatsappCustomMessage,
           });
         }
 
-        // Rewards sync
-        const localRewards = loadRewards();
-        const customRewards = isRewardsCustomized();
-        const defaultRewardTitles = [
-          'PORÇÃO DE BATATA FRITA',
-          'CHURROS MIX TRADICIONAL',
-          '10 % DE DESCONTO',
-          '5% DE DESCONTO',
-        ];
-        const isServerOnlyDefaults =
-          Array.isArray(syncData.rewards) &&
-          syncData.rewards.length === 4 &&
-          syncData.rewards.every((r, i) => r.title === defaultRewardTitles[i]);
-
-        if (customRewards && isServerOnlyDefaults && JSON.stringify(localRewards) !== JSON.stringify(syncData.rewards)) {
-          // Keep local custom rewards and push them to the server so the server database is saved!
-          setRewards(localRewards);
-          apiSaveRewards(localRewards).catch(() => {});
-        } else if (Array.isArray(syncData.rewards) && syncData.rewards.length > 0) {
+        if (Array.isArray(syncData.rewards)) {
           setRewards(syncData.rewards);
           saveRewards(syncData.rewards);
-        } else {
-          apiSaveRewards(localRewards).catch(() => {});
         }
 
-        // Waiters sync
-        const localWaiters = loadWaiters();
-        const customWaiters = isWaitersCustomized();
-        const defaultWaiterNames = ['Carlos Oliveira', 'Mariana Santos', 'Lucas Pereira', 'Juliana Costa'];
-        const isServerOnlyDefaultWaiters =
-          Array.isArray(syncData.waiters) &&
-          syncData.waiters.length <= 5 &&
-          syncData.waiters.every((w) => defaultWaiterNames.includes(w.name) || w.name === 'Marcos Souza');
-
-        if (customWaiters && isServerOnlyDefaultWaiters && JSON.stringify(localWaiters) !== JSON.stringify(syncData.waiters)) {
-          // Keep local custom waiters and push them to the server so the server database is saved!
-          setWaiters(localWaiters);
-          apiSaveWaiters(localWaiters).catch(() => {});
-        } else if (Array.isArray(syncData.waiters) && syncData.waiters.length > 0) {
+        if (Array.isArray(syncData.waiters)) {
           setWaiters(syncData.waiters);
           saveWaiters(syncData.waiters);
-        } else {
-          apiSaveWaiters(localWaiters).catch(() => {});
         }
 
-        // Reviews sync: merge local reviews and server reviews so no reviews are ever lost
-        const localReviews = loadReviews();
-        const reviewMap = new Map<string, Review>();
-        localReviews.forEach((r) => {
-          if (!deletedReviewIdsRef.current.has(r.id)) {
-            reviewMap.set(r.id, r);
-          }
-        });
         if (Array.isArray(syncData.reviews)) {
-          syncData.reviews.forEach((r) => {
-            if (!deletedReviewIdsRef.current.has(r.id)) {
-              reviewMap.set(r.id, r);
-            }
-          });
+          const cleanReviews = syncData.reviews
+            .filter((r) => !deletedReviewIdsRef.current.has(r.id))
+            .sort((x, y) => new Date(y.createdAt).getTime() - new Date(x.createdAt).getTime());
+
+          setReviews(cleanReviews);
+          saveReviews(cleanReviews);
+          cleanReviews.forEach((r) => knownReviewIdsRef.current.add(r.id));
         }
-        const mergedReviews = Array.from(reviewMap.values()).sort(
-          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
-        setReviews(mergedReviews);
-        saveReviews(mergedReviews);
-        mergedReviews.forEach((r) => knownReviewIdsRef.current.add(r.id));
 
         setIsServerSynced(true);
       })
       .catch((err) => {
-        console.warn('Initial sync error:', err);
+        console.warn('Initial PostgreSQL sync error:', err);
+        setIsServerSynced(false);
       });
 
     return () => {
