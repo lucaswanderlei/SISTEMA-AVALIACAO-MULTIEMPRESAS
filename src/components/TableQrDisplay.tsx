@@ -51,6 +51,7 @@ export const TableQrDisplay: React.FC<TableQrDisplayProps> = ({
   // Plaque personalization
   const [plaqueTitle, setPlaqueTitle] = useState('Sua opinião vale brinde!');
   const [plaqueSubtitle, setPlaqueSubtitle] = useState('Aponte a câmera do celular e avalie sua experiência');
+  const [displayTemplate, setDisplayTemplate] = useState<'classic' | 'premium' | 'minimal' | 'fun' | 'prize' | 'table'>('premium');
 
   const getAutoDetectedDomain = () => {
     if (typeof window !== 'undefined') {
@@ -300,6 +301,16 @@ export const TableQrDisplay: React.FC<TableQrDisplayProps> = ({
                 </div>
               </div>
 
+              <div className="space-y-3 p-3.5 bg-white rounded-2xl border border-stone-200">
+                <div><div className="text-xs font-bold text-stone-800">Escolha o layout do display</div><div className="text-[11px] text-stone-500 mt-0.5">Clique em um modelo para visualizar antes de imprimir.</div></div>
+                <div className="grid grid-cols-2 gap-2">
+                  {([['classic','Clássico','Claro e elegante'],['premium','Premium','Escuro e sofisticado'],['minimal','Minimalista','QR em destaque'],['fun','Divertido','Mais descontraído'],['prize','Ganhe Prêmios','Foco na recompensa'],['table','Mesa','Identidade de restaurante']] as const).map(([id,name,desc]) => (
+                    <button key={id} type="button" onClick={() => setDisplayTemplate(id)} className={`text-left p-2.5 rounded-xl border transition ${displayTemplate === id ? 'border-rose-500 ring-2 ring-rose-100 bg-rose-50' : 'border-stone-200 bg-stone-50 hover:bg-stone-100'}`}>
+                      <div className="flex items-center justify-between gap-2"><span className="text-[11px] font-black text-stone-900">{name}</span>{displayTemplate === id && <Check className="w-3.5 h-3.5 text-rose-600" />}</div><span className="text-[9px] text-stone-500">{desc}</span>
+                    </button>))}
+                </div>
+              </div>
+
               {/* Real-time Central Sync Badge */}
               <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl space-y-1">
                 <div className="flex items-center gap-2 text-xs font-black text-emerald-800">
@@ -453,7 +464,7 @@ export const TableQrDisplay: React.FC<TableQrDisplayProps> = ({
               {/* FORMAT 1: Display 10x8 cm (Padrão de Mesa) */}
               {universalPrintFormat === 'display_10x8' && (
                 <div className="printable-area w-full flex justify-center">
-                  <TableDisplayCard10x8
+                  <TableDisplayCard10x8 template={displayTemplate}
                     settings={settings}
                     qrCodeUrl={qrCodeUrl}
                     title={plaqueTitle}
@@ -471,10 +482,10 @@ export const TableQrDisplay: React.FC<TableQrDisplayProps> = ({
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <TableDisplayCard10x8 settings={settings} qrCodeUrl={qrCodeUrl} title={plaqueTitle} subtitle={plaqueSubtitle} compact />
-                    <TableDisplayCard10x8 settings={settings} qrCodeUrl={qrCodeUrl} title={plaqueTitle} subtitle={plaqueSubtitle} compact />
-                    <TableDisplayCard10x8 settings={settings} qrCodeUrl={qrCodeUrl} title={plaqueTitle} subtitle={plaqueSubtitle} compact />
-                    <TableDisplayCard10x8 settings={settings} qrCodeUrl={qrCodeUrl} title={plaqueTitle} subtitle={plaqueSubtitle} compact />
+                    <TableDisplayCard10x8 template={displayTemplate} settings={settings} qrCodeUrl={qrCodeUrl} title={plaqueTitle} subtitle={plaqueSubtitle} compact />
+                    <TableDisplayCard10x8 template={displayTemplate} settings={settings} qrCodeUrl={qrCodeUrl} title={plaqueTitle} subtitle={plaqueSubtitle} compact />
+                    <TableDisplayCard10x8 template={displayTemplate} settings={settings} qrCodeUrl={qrCodeUrl} title={plaqueTitle} subtitle={plaqueSubtitle} compact />
+                    <TableDisplayCard10x8 template={displayTemplate} settings={settings} qrCodeUrl={qrCodeUrl} title={plaqueTitle} subtitle={plaqueSubtitle} compact />
                   </div>
                 </div>
               )}
@@ -596,7 +607,7 @@ export const TableQrDisplay: React.FC<TableQrDisplayProps> = ({
                   </button>
                 </div>
                 <div className="printable-area w-full flex justify-center">
-                  <TableDisplayCard10x8
+                  <TableDisplayCard10x8 template={displayTemplate}
                     settings={settings}
                     qrCodeUrl={qrCodeUrl}
                     tableNumber={selectedMesa}
@@ -652,6 +663,7 @@ interface TableDisplayCard10x8Props {
   title?: string;
   subtitle?: string;
   compact?: boolean;
+  template?: 'classic' | 'premium' | 'minimal' | 'fun' | 'prize' | 'table';
 }
 
 export const TableDisplayCard10x8: React.FC<TableDisplayCard10x8Props> = ({
@@ -661,12 +673,21 @@ export const TableDisplayCard10x8: React.FC<TableDisplayCard10x8Props> = ({
   title = 'Sua opinião vale brinde!',
   subtitle = 'Aponte a câmera do celular e avalie sua experiência',
   compact = false,
+  template = 'premium',
 }) => {
+  const theme = {
+    classic: 'bg-white text-stone-900 border-stone-300',
+    premium: 'bg-stone-950 text-white border-stone-800',
+    minimal: 'bg-stone-50 text-stone-950 border-stone-200',
+    fun: 'bg-amber-50 text-stone-950 border-amber-300',
+    prize: 'bg-rose-950 text-white border-amber-400',
+    table: 'bg-stone-900 text-white border-rose-700',
+  }[template];
   return (
     <div
       className={`relative w-full ${
         compact ? 'max-w-xs p-3.5 rounded-xl' : 'max-w-[430px] p-5 sm:p-6 rounded-2xl'
-      } bg-stone-950 text-white shadow-2xl border-2 border-stone-800 text-left overflow-hidden flex flex-col justify-between print:border print:border-stone-400 print:shadow-none print:bg-stone-950`}
+      } ${theme} shadow-2xl border-2 text-left overflow-hidden flex flex-col justify-between print:border print:border-stone-400 print:shadow-none`}
       style={{ aspectRatio: '10 / 8' }}
     >
       {/* Acrylic Glare Effect */}
@@ -676,8 +697,8 @@ export const TableDisplayCard10x8: React.FC<TableDisplayCard10x8Props> = ({
       {/* Card Header: Brand & Table Number */}
       <div className="flex items-center justify-between gap-3 border-b border-stone-800/80 pb-2.5">
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-rose-600 to-amber-600 text-white flex items-center justify-center shadow-xs">
-            <UtensilsCrossed className="w-3.5 h-3.5" />
+          <div className="w-8 h-8 rounded-lg bg-white overflow-hidden flex items-center justify-center shadow-xs border border-stone-200">
+            {settings.logoUrl ? <img src={settings.logoUrl} alt={settings.name} className="w-full h-full object-contain" /> : <UtensilsCrossed className="w-4 h-4 text-rose-700" />}
           </div>
           <div>
             <div className="text-sm font-black tracking-tight leading-none text-white">
@@ -767,6 +788,7 @@ interface AcrylicStandCardProps {
   qrCodeUrl: string;
   tableNumber?: number; // if provided, shows specific table number; if omitted, shows universal badge
   compact?: boolean;
+  template?: 'classic' | 'premium' | 'minimal' | 'fun' | 'prize' | 'table';
 }
 
 const AcrylicStandCard: React.FC<AcrylicStandCardProps> = ({
@@ -774,7 +796,16 @@ const AcrylicStandCard: React.FC<AcrylicStandCardProps> = ({
   qrCodeUrl,
   tableNumber,
   compact = false,
+  template = 'premium',
 }) => {
+  const theme = {
+    classic: 'bg-white text-stone-900 border-stone-300',
+    premium: 'bg-stone-950 text-white border-stone-800',
+    minimal: 'bg-stone-50 text-stone-950 border-stone-200',
+    fun: 'bg-amber-50 text-stone-950 border-amber-300',
+    prize: 'bg-rose-950 text-white border-amber-400',
+    table: 'bg-stone-900 text-white border-rose-700',
+  }[template];
   return (
     <div
       className={`relative w-full ${
