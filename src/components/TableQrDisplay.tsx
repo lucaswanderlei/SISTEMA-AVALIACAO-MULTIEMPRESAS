@@ -493,7 +493,7 @@ export const TableQrDisplay: React.FC<TableQrDisplayProps> = ({
               {/* FORMAT 3: Stand 10x15 cm */}
               {universalPrintFormat === 'stand_10x15' && (
                 <div className="printable-area w-full flex justify-center">
-                  <AcrylicStandCard settings={settings} qrCodeUrl={qrCodeUrl} />
+                  <AcrylicStandCard settings={settings} qrCodeUrl={qrCodeUrl} template={displayTemplate} />
                 </div>
               )}
             </div>
@@ -810,7 +810,7 @@ const AcrylicStandCard: React.FC<AcrylicStandCardProps> = ({
     <div
       className={`relative w-full ${
         compact ? 'max-w-xs p-4 rounded-2xl' : 'max-w-sm p-6 sm:p-7 rounded-3xl'
-      } bg-gradient-to-b from-stone-950 via-stone-900 to-stone-950 text-white shadow-2xl border-4 border-stone-800 text-center overflow-hidden`}
+      } ${theme} shadow-2xl border-4 text-center overflow-hidden`}
     >
       {/* Glossy Acrylic Reflections */}
       <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-transparent via-white/50 to-transparent" />
@@ -819,14 +819,18 @@ const AcrylicStandCard: React.FC<AcrylicStandCardProps> = ({
 
       {/* Brand Header */}
       <div className="flex items-center justify-center gap-2.5 mb-2">
-        <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-rose-600 to-amber-600 text-white flex items-center justify-center shadow-md shadow-rose-900/50">
-          <UtensilsCrossed className="w-4 h-4" />
+        <div className="w-10 h-10 rounded-xl bg-white overflow-hidden flex items-center justify-center shadow-md border border-stone-200">
+          {settings.logoUrl ? (
+            <img src={settings.logoUrl} alt={settings.name} className="w-full h-full object-contain" />
+          ) : (
+            <UtensilsCrossed className="w-5 h-5 text-rose-700" />
+          )}
         </div>
         <div className="text-left">
-          <div className="text-base font-black tracking-tight leading-none text-white">
+          <div className={`text-base font-black tracking-tight leading-none ${['premium','prize','table'].includes(template) ? 'text-white' : 'text-stone-950'}`}>
             {settings.name}
           </div>
-          <div className="text-[10px] text-stone-400 leading-tight mt-0.5">
+          <div className={`text-[10px] leading-tight mt-0.5 ${['premium','prize','table'].includes(template) ? 'text-stone-300' : 'text-stone-600'}`}>
             {settings.tagline}
           </div>
         </div>
@@ -850,11 +854,11 @@ const AcrylicStandCard: React.FC<AcrylicStandCardProps> = ({
       <h3
         className={`${
           compact ? 'text-base' : 'text-lg'
-        } font-black text-amber-300 leading-tight mb-1`}
+        } font-black ${template === 'minimal' ? 'text-stone-950' : template === 'classic' ? 'text-rose-700' : template === 'fun' ? 'text-rose-700' : 'text-amber-300'} leading-tight mb-1`}
       >
         Cadastre Nome & WhatsApp • Ganhe Brinde!
       </h3>
-      <p className="text-[11px] text-stone-300 mb-3 px-1 leading-relaxed">
+      <p className={`text-[11px] mb-3 px-1 leading-relaxed ${['premium','prize','table'].includes(template) ? 'text-stone-300' : 'text-stone-700'}`}>
         Aponte a câmera do celular, avalie sua visita e cadastre seus dados para receber um brinde válido por {settings.rewardValidityDays || 15} dias.
       </p>
 
@@ -881,8 +885,8 @@ const AcrylicStandCard: React.FC<AcrylicStandCardProps> = ({
       </div>
 
       {/* Step guide */}
-      <div className="mt-3 text-[11px] text-stone-300 space-y-0.5">
-        <div className="text-stone-400 font-medium">
+      <div className={`mt-3 text-[11px] space-y-0.5 ${['premium','prize','table'].includes(template) ? 'text-stone-300' : 'text-stone-700'}`}>
+        <div className={`font-medium ${['premium','prize','table'].includes(template) ? 'text-stone-400' : 'text-stone-600'}`}>
           1. Aponte a câmera • 2. Cadastre Nome & Telefone • 3. Brinde válido por {settings.rewardValidityDays || 15} dias!
         </div>
       </div>
