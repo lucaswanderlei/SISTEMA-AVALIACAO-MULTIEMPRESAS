@@ -55,7 +55,7 @@ export interface RewardOption {
   probabilityWeight?: number;
 }
 
-export type RatingIconType = 'star' | 'coxinha' | 'brigadeiro' | 'cake' | 'pizza' | 'icecream' | 'coffee' | 'hamburger' | 'fries' | 'hotdog' | 'croissant' | 'drink' | 'chicken' | 'beef' | 'fish' | 'sandwich' | 'cookie' | 'utensils';
+export type RatingIconType = 'star' | 'coxinha' | 'brigadeiro' | 'cake' | 'pizza' | 'icecream' | 'coffee' | 'hamburger' | 'fries';
 
 export interface RestaurantSettings {
   name: string;
