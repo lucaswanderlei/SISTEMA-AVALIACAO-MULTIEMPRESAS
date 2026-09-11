@@ -263,8 +263,10 @@ function loadDb(): RestaurantDb {
   };
 }
 const postgresSaveQueues = new Map<string, Promise<void>>();
-async function saveDbToPostgres(db: RestaurantDb): Promise<void> {
-  const empresaId = currentCompanyId();
+async function saveDbToPostgres(db: RestaurantDb, explicitCompanyId?: string): Promise<void> {
+  const empresaId = normalizeCompanyId(explicitCompanyId || currentCompanyId());
+  // IMPORTANT: always serialize a concrete tenant DB object, never the activeDb Proxy.
+  // JSON.stringify(activeDb) can become '{}', which would wipe persisted company data.
   const snapshot = JSON.stringify(db);
   const nome = db.settings?.name || empresaId;
 
@@ -289,12 +291,24 @@ async function saveDbToPostgres(db: RestaurantDb): Promise<void> {
     }
   }
 }
-function saveDb(db: RestaurantDb): void {
+function saveDb(_db: RestaurantDb): void {
+  const companyId = currentCompanyId();
+  // Always persist the real object stored for this tenant. `activeDb` is a Proxy and
+  // must never be serialized directly, otherwise JSON.stringify may produce `{}`.
+  const concreteDb = tenantDbs.get(companyId);
+  if (!concreteDb) {
+    console.error(`[Database] Tentativa de salvar empresa ${companyId} sem banco carregado. Salvamento ignorado para proteger os dados.`);
+    return;
+  }
+
+  // Snapshot immediately so later in-memory mutations cannot change this queued write.
+  const snapshot: RestaurantDb = JSON.parse(JSON.stringify(concreteDb));
+
   // Em produção (Render), o disco local é efêmero. PostgreSQL é a fonte de verdade.
   if (process.env.NODE_ENV !== 'production') {
     try {
       if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-      const content = JSON.stringify(db, null, 2);
+      const content = JSON.stringify(snapshot, null, 2);
       fs.writeFileSync(DB_FILE, content, 'utf-8');
       try { fs.writeFileSync(DB_BACKUP_FILE, content, 'utf-8'); } catch {}
     } catch (err) {
@@ -302,7 +316,7 @@ function saveDb(db: RestaurantDb): void {
     }
   }
 
-  void saveDbToPostgres(db).catch((err) => {
+  void saveDbToPostgres(snapshot, companyId).catch((err) => {
     console.error('[PostgreSQL] Falha ao persistir alteração:', err);
   });
 }
@@ -1749,13 +1763,28 @@ Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos voc
     });
   }
 
-  // Automated background interval to check and notify expiring vouchers (5 days and 1 day)
+  // Automated background interval to check and notify expiring vouchers (5 days and 1 day).
+  // IMPORTANT: run once per loaded company inside its tenant context. Running this
+  // outside tenantContext would silently use the fallback `demo` tenant.
+  const runExpirationChecksForAllCompanies = async () => {
+    const companyIds = Array.from(tenantDbs.keys());
+    for (const companyId of companyIds) {
+      try {
+        await tenantContext.run({ companyId }, async () => {
+          await checkAndSendExpiringNotifications(true);
+        });
+      } catch (e) {
+        console.warn(`[Auto Expiration Check] ${companyId}:`, e);
+      }
+    }
+  };
+
   setTimeout(() => {
-    checkAndSendExpiringNotifications(true).catch((e) => console.warn('[Auto Expiration Check] Notice:', e));
+    runExpirationChecksForAllCompanies().catch((e) => console.warn('[Auto Expiration Check] Notice:', e));
   }, 10000);
 
   setInterval(() => {
-    checkAndSendExpiringNotifications(true).catch((e) => console.warn('[Auto Expiration Check] Notice:', e));
+    runExpirationChecksForAllCompanies().catch((e) => console.warn('[Auto Expiration Check] Notice:', e));
   }, 30 * 60 * 1000);
 
   app.listen(PORT, '0.0.0.0', () => {
