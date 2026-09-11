@@ -68,8 +68,36 @@ const SPRITE_POSITIONS: Partial<Record<RatingIconType, [number, number]>> = {
 };
 
 const PhotoStyleFoodIcon: React.FC<{ type: RatingIconType; className?: string }> = ({ type, className='w-8 h-8' }) => {
-  const pos=SPRITE_POSITIONS[type]; if(!pos) return null; const [x,y]=pos;
-  return <span className={`inline-block bg-no-repeat ${className}`} aria-hidden="true" style={{backgroundImage:`url(${foodIconsSprite})`,backgroundSize:'600% 400%',backgroundPosition:`${x*20}% ${y*(100/3)}%`}} />;
+  const pos = SPRITE_POSITIONS[type];
+  if (!pos) return null;
+
+  const [x, y] = pos;
+
+  // Cada ícone ocupa uma célula de uma grade 6 x 4.
+  // O recorte é feito com overflow em vez de background-position,
+  // evitando que partes do ícone vizinho apareçam.
+  // A imagem é ampliada um pouco para o desenho ocupar o mesmo
+  // enquadramento visual do BrigadeiroIcon.
+  return (
+    <span
+      className={`relative inline-block overflow-hidden align-middle ${className}`}
+      aria-hidden="true"
+    >
+      <img
+        src={foodIconsSprite}
+        alt=""
+        draggable={false}
+        className="pointer-events-none absolute max-w-none select-none"
+        style={{
+          width: '600%',
+          height: '400%',
+          left: `${-x * 100}%`,
+          top: `${-y * 100}%`,
+          objectFit: 'fill',
+        }}
+      />
+    </span>
+  );
 };
 
 export const RatingChoiceIcon: React.FC<RatingChoiceIconProps> = ({ type='coxinha', filled=false, className='w-8 h-8' }) => {
