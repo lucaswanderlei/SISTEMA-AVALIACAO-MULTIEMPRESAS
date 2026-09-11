@@ -2894,15 +2894,18 @@ return (
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-stone-700 mb-2">
-              Ícone da avaliação (1 a 5)
-            </label>
-            <p className="text-[11px] text-stone-400 mb-3">
-              Escolha o símbolo que seus clientes tocarão para dar as notas.
-            </p>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-              {([
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-semibold text-stone-700 mb-1">
+                Ícones da avaliação (1 a 5)
+              </label>
+              <p className="text-[11px] text-stone-400">
+                Escolha um símbolo diferente para cada requisito da avaliação.
+              </p>
+            </div>
+
+            {(() => {
+              const ratingIconOptions: [RatingIconType, string][] = [
                 ['star', 'Estrelas'],
                 ['coxinha', 'Coxinha'],
                 ['brigadeiro', 'Brigadeiro'],
@@ -2929,29 +2932,56 @@ return (
                 ['salad', 'Salada'],
                 ['taco', 'Taco'],
                 ['skewer', 'Espetinho'],
-              ] as [RatingIconType, string][]).map(([value, label]) => {
-                const selected = (settings.ratingIcon || 'coxinha') === value;
-                return (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => onUpdateSettings({ ...settings, ratingIcon: value })}
-                    className={`rounded-xl border p-3 flex flex-col items-center gap-2 text-[11px] font-bold transition ${
-                      selected
-                        ? 'border-rose-500 bg-rose-50 text-rose-700 ring-2 ring-rose-100'
-                        : 'border-stone-200 bg-white text-stone-600 hover:border-stone-300 hover:bg-stone-50'
-                    }`}
-                  >
-                    <RatingChoiceIcon
-                      type={value}
-                      filled
-                      className={`w-8 h-8 ${selected ? 'text-rose-600' : 'text-stone-500'}`}
-                    />
-                    <span className="text-center leading-tight">{label}</span>
-                  </button>
-                );
-              })}
-            </div>
+              ];
+
+              const criteria: Array<{
+                key: 'serviceRatingIcon' | 'ambianceRatingIcon' | 'productsRatingIcon' | 'waitTimeRatingIcon';
+                label: string;
+                description: string;
+              }> = [
+                { key: 'serviceRatingIcon', label: 'Atendimento & Garçons', description: 'Ícone usado na nota do atendimento.' },
+                { key: 'ambianceRatingIcon', label: 'Ambiente & Conforto', description: 'Ícone usado na nota do ambiente.' },
+                { key: 'productsRatingIcon', label: 'Produtos & Gastronomia', description: 'Ícone usado na nota dos produtos.' },
+                { key: 'waitTimeRatingIcon', label: 'Tempo de Espera', description: 'Ícone usado na nota do tempo de espera.' },
+              ];
+
+              return (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {criteria.map(({ key, label, description }) => {
+                    const selectedIcon = (settings[key] || settings.ratingIcon || 'coxinha') as RatingIconType;
+                    return (
+                      <div key={key} className="rounded-xl border border-stone-200 bg-stone-50/60 p-3">
+                        <div className="flex items-center gap-3 mb-3">
+                          <div className="w-11 h-11 rounded-xl bg-white border border-stone-200 flex items-center justify-center shrink-0">
+                            <RatingChoiceIcon type={selectedIcon} filled className="w-7 h-7 text-rose-600" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-xs font-black text-stone-800">{label}</div>
+                            <div className="text-[10px] text-stone-500">{description}</div>
+                          </div>
+                        </div>
+                        <select
+                          value={selectedIcon}
+                          onChange={(e) =>
+                            onUpdateSettings({
+                              ...settings,
+                              [key]: e.target.value as RatingIconType,
+                            })
+                          }
+                          className="w-full text-xs p-2.5 rounded-xl border border-stone-200 bg-white focus:border-rose-500 outline-none font-semibold text-stone-700"
+                        >
+                          {ratingIconOptions.map(([value, optionLabel]) => (
+                            <option key={value} value={value}>
+                              {optionLabel}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
 
           <div className="rounded-2xl border border-stone-200 bg-stone-50/70 p-4">

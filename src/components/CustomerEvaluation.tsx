@@ -625,7 +625,7 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
               value={ratings.service}
               onChange={(val) => setRatings((prev) => ({ ...prev, service: val }))}
               required
-              ratingIcon={settings.ratingIcon || 'coxinha'}
+              ratingIcon={settings.serviceRatingIcon || settings.ratingIcon || 'coxinha'}
             />
 
             {/* Ambiente */}
@@ -637,7 +637,7 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
               value={ratings.ambiance}
               onChange={(val) => setRatings((prev) => ({ ...prev, ambiance: val }))}
               required
-              ratingIcon={settings.ratingIcon || 'coxinha'}
+              ratingIcon={settings.ambianceRatingIcon || settings.ratingIcon || 'coxinha'}
             />
 
             {/* Produtos / Comida */}
@@ -649,7 +649,7 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
               value={ratings.products}
               onChange={(val) => setRatings((prev) => ({ ...prev, products: val }))}
               required
-              ratingIcon={settings.ratingIcon || 'coxinha'}
+              ratingIcon={settings.productsRatingIcon || settings.ratingIcon || 'coxinha'}
             />
 
             {/* Tempo de Espera */}
@@ -661,7 +661,7 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
               value={ratings.waitTime}
               onChange={(val) => setRatings((prev) => ({ ...prev, waitTime: val }))}
               required
-              ratingIcon={settings.ratingIcon || 'coxinha'}
+              ratingIcon={settings.waitTimeRatingIcon || settings.ratingIcon || 'coxinha'}
             />
           </div>
 
@@ -786,7 +786,7 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
                 <div className="pt-3 border-t border-stone-100 space-y-3 bg-amber-50/40 p-4 rounded-2xl border border-amber-200/50 animate-fade-in">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <span className="text-xs font-extrabold text-stone-800 flex items-center gap-1.5">
-                      <RatingChoiceIcon type={settings.ratingIcon || 'coxinha'} filled className="w-4 h-4 inline-block" />
+                      <RatingChoiceIcon type={settings.serviceRatingIcon || settings.ratingIcon || 'coxinha'} filled className="w-4 h-4 inline-block" />
                       Avaliação do atendimento de {selectedWaiter.name.split(' ')[0]}:
                     </span>
 
@@ -801,7 +801,7 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
                           title={`${ratingValue} de 5`}
                         >
                           <RatingChoiceIcon
-                            type={settings.ratingIcon || 'coxinha'}
+                            type={settings.serviceRatingIcon || settings.ratingIcon || 'coxinha'}
                             filled={ratingValue <= waiterRating}
                             className={`w-6 h-6 transition-all ${
                               ratingValue <= waiterRating
