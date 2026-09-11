@@ -463,8 +463,63 @@ if (totalEmpresas === 0) {
 
   const app = express();
 
+  // Define automaticamente qual empresa deve abrir quando a URL principal é
+  // acessada sem ?empresa=. Priorizamos o Sr. Coxita; se o nome tiver sido
+  // alterado, usamos a empresa ativa mais antiga como fallback seguro.
+  async function getDefaultPublicCompanyId(): Promise<string | null> {
+    const result = await pool.query(`
+      SELECT empresa_id
+      FROM avaliacao_empresas
+      WHERE ativo = TRUE
+      ORDER BY
+        CASE
+          WHEN LOWER(COALESCE(nome, '')) IN ('sr. coxita', 'sr coxita') THEN 0
+          WHEN LOWER(COALESCE(dados->'settings'->>'name', '')) IN ('sr. coxita', 'sr coxita') THEN 0
+          WHEN LOWER(COALESCE(nome, '')) LIKE '%coxita%' THEN 1
+          WHEN LOWER(COALESCE(dados->'settings'->>'name', '')) LIKE '%coxita%' THEN 1
+          ELSE 2
+        END,
+        criado_em ASC
+      LIMIT 1
+    `);
+    return result.rows[0]?.empresa_id ? String(result.rows[0].empresa_id) : null;
+  }
+
   app.use(async (req, res, next) => {
-    const companyId = normalizeCompanyId(req.header('X-Company-Id') || req.query.empresa || 'demo');
+    const requestedCompany = req.header('X-Company-Id') || req.query.empresa;
+
+    // Páginas e arquivos estáticos não precisam carregar um tenant. Isso evita
+    // que /assets/* ou a própria página inicial tentem usar o antigo "demo".
+    if (!req.path.startsWith('/api/')) {
+      const isSuperAdminPage = req.path.replace(/\/$/, '') === '/superadmin';
+
+      // Ao abrir a URL principal (ou /gerencia) sem empresa, acrescenta
+      // automaticamente ?empresa=<Sr. Coxita>, preservando os demais parâmetros.
+      if (!requestedCompany && !isSuperAdminPage) {
+        try {
+          const defaultCompanyId = await getDefaultPublicCompanyId();
+          if (defaultCompanyId) {
+            const params = new URLSearchParams();
+            for (const [key, value] of Object.entries(req.query)) {
+              if (Array.isArray(value)) {
+                value.forEach((item) => params.append(key, String(item)));
+              } else if (value !== undefined) {
+                params.set(key, String(value));
+              }
+            }
+            params.set('empresa', defaultCompanyId);
+            const query = params.toString();
+            return res.redirect(302, `${req.path}${query ? `?${query}` : ''}`);
+          }
+        } catch (err) {
+          console.error('[Multiempresa] Falha ao descobrir empresa padrão:', err);
+        }
+      }
+
+      return next();
+    }
+
+    const companyId = normalizeCompanyId(requestedCompany || 'demo');
 
     // Super Admin and health do not depend on a tenant DB being loaded.
     if (req.path.startsWith('/api/admin/') || req.path === '/api/health') {
