@@ -1,5 +1,5 @@
 import React from 'react';
-import { Star } from 'lucide-react';
+import { Star, Coffee, Hamburger, CookingPot, Croissant, CupSoda, Drumstick, Beef, Fish, Sandwich, Cookie, UtensilsCrossed, Popcorn } from 'lucide-react';
 import { CoxinhaIcon } from './CoxinhaIcon';
 import type { RatingIconType } from '../types';
 
@@ -65,5 +65,17 @@ export const RatingChoiceIcon: React.FC<RatingChoiceIconProps> = ({ type = 'coxi
   if (type === 'cake') return <CakeSliceIcon filled={filled} className={className} />;
   if (type === 'pizza') return <PizzaSliceIcon filled={filled} className={className} />;
   if (type === 'icecream') return <IceCreamIcon filled={filled} className={className} />;
+  if (type === 'coffee') return <Coffee className={className} fill={filled ? 'currentColor' : 'none'} strokeWidth={1.9} />;
+  if (type === 'hamburger') return <Hamburger className={className} fill={filled ? 'currentColor' : 'none'} strokeWidth={1.9} />;
+  if (type === 'fries') return <Popcorn className={className} fill={filled ? 'currentColor' : 'none'} strokeWidth={1.9} />;
+  if (type === 'hotdog') return <CookingPot className={className} fill={filled ? 'currentColor' : 'none'} strokeWidth={1.9} />;
+  if (type === 'croissant') return <Croissant className={className} fill={filled ? 'currentColor' : 'none'} strokeWidth={1.9} />;
+  if (type === 'drink') return <CupSoda className={className} fill={filled ? 'currentColor' : 'none'} strokeWidth={1.9} />;
+  if (type === 'chicken') return <Drumstick className={className} fill={filled ? 'currentColor' : 'none'} strokeWidth={1.9} />;
+  if (type === 'beef') return <Beef className={className} fill={filled ? 'currentColor' : 'none'} strokeWidth={1.9} />;
+  if (type === 'fish') return <Fish className={className} fill={filled ? 'currentColor' : 'none'} strokeWidth={1.9} />;
+  if (type === 'sandwich') return <Sandwich className={className} fill={filled ? 'currentColor' : 'none'} strokeWidth={1.9} />;
+  if (type === 'cookie') return <Cookie className={className} fill={filled ? 'currentColor' : 'none'} strokeWidth={1.9} />;
+  if (type === 'utensils') return <UtensilsCrossed className={className} fill={filled ? 'currentColor' : 'none'} strokeWidth={1.9} />;
   return <CoxinhaIcon filled={filled} className={className} />;
 };

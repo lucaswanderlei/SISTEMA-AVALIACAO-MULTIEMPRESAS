@@ -2909,6 +2909,18 @@ return (
                 ['cake', 'Fatias de bolo'],
                 ['pizza', 'Fatias de pizza'],
                 ['icecream', 'Sorvete'],
+                ['coffee', 'Café'],
+                ['hamburger', 'Hambúrguer'],
+                ['fries', 'Batata frita'],
+                ['hotdog', 'Hot dog'],
+                ['croissant', 'Croissant'],
+                ['drink', 'Bebida'],
+                ['chicken', 'Frango'],
+                ['beef', 'Carne'],
+                ['fish', 'Peixe'],
+                ['sandwich', 'Sanduíche'],
+                ['cookie', 'Cookie'],
+                ['utensils', 'Prato / talheres'],
               ] as [RatingIconType, string][]).map(([value, label]) => {
                 const selected = (settings.ratingIcon || 'coxinha') === value;
                 return (
