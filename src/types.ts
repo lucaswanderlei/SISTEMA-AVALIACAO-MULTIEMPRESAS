@@ -63,7 +63,11 @@ export interface RestaurantSettings {
   primaryColor: string;
   secondaryColor?: string;
   logoUrl?: string;
-  ratingIcon?: RatingIconType;
+  ratingIcon?: RatingIconType; // Compatibilidade com configurações antigas
+  serviceRatingIcon?: RatingIconType;
+  ambianceRatingIcon?: RatingIconType;
+  productsRatingIcon?: RatingIconType;
+  waitTimeRatingIcon?: RatingIconType;
   evaluationTitle?: string;
   evaluationDescription?: string;
   quickTagsOptions?: string[]; // Destaques rápidos personalizáveis por empresa
