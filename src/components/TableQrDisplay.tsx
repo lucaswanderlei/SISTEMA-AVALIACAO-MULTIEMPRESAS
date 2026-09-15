@@ -55,7 +55,7 @@ export const TableQrDisplay: React.FC<TableQrDisplayProps> = ({
 
   const getAutoDetectedDomain = () => {
     if (typeof window !== 'undefined') {
-      return `${window.location.origin}${window.location.pathname}`;
+      return `${window.location.origin}/`; // QR público sempre aponta para a raiz, nunca para /gerencia
     }
     return 'https://seurestaurante.com.br/';
   };
