@@ -12,7 +12,7 @@ export function tenantFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   return fetch(input, { ...init, headers });
 }
 
-export async function apiManagerLogin(login: string, password: string): Promise<{ success: boolean; token?: string; role?: string; error?: string }> {
+export async function apiManagerLogin(login: string, password: string): Promise<{ success: boolean; token?: string; role?: string; accessLevel?: 'owner' | 'manager' | 'viewer'; userId?: string; userName?: string; error?: string }> {
   try {
     const res = await tenantFetch('/api/auth/manager', {
       method: 'POST',
@@ -24,7 +24,100 @@ export async function apiManagerLogin(login: string, password: string): Promise<
     if (data.token) {
       try { sessionStorage.setItem(tenantKey('restaurant_manager_token'), data.token); } catch {}
     }
-    return { success: true, token: data.token, role: data.role };
+    return { success: true, token: data.token, role: data.role, accessLevel: data.accessLevel, userId: data.userId, userName: data.userName };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Falha de conexão com o servidor.' };
+  }
+}
+
+export async function apiRequestPasswordReset(login: string): Promise<{ success: boolean; message?: string; error?: string }> {
+  try {
+    const res = await tenantFetch('/api/auth/forgot-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login }),
+    });
+    const data = await res.json().catch(() => ({}));
+    return res.ok
+      ? { success: true, message: data.message || 'Se o acesso estiver cadastrado, as instruções serão enviadas.' }
+      : { success: false, error: data.error || 'Não foi possível solicitar a recuperação.' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Falha de conexão com o servidor.' };
+  }
+}
+
+export async function apiResetPassword(token: string, password: string): Promise<{ success: boolean; message?: string; error?: string }> {
+  try {
+    const res = await tenantFetch('/api/auth/reset-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, password }),
+    });
+    const data = await res.json().catch(() => ({}));
+    return res.ok
+      ? { success: true, message: data.message || 'Senha redefinida.' }
+      : { success: false, error: data.error || 'Não foi possível redefinir a senha.' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Falha de conexão com o servidor.' };
+  }
+}
+
+export type CompanyUserAccessLevel = 'owner' | 'manager' | 'viewer';
+export interface CompanyUser {
+  id: string;
+  nome: string;
+  login: string;
+  email?: string | null;
+  perfil: CompanyUserAccessLevel;
+  ativo: boolean;
+  ultimo_acesso_em?: string | null;
+  criado_em?: string;
+  atualizado_em?: string;
+}
+
+export async function apiFetchUsers(): Promise<{ success: boolean; users?: CompanyUser[]; error?: string }> {
+  try {
+    const res = await tenantFetch('/api/users', { cache: 'no-store' });
+    const data = await res.json().catch(() => ({}));
+    return res.ok ? { success: true, users: data.users || [] } : { success: false, error: data.error || 'Não foi possível carregar usuários.' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Falha de conexão com o servidor.' };
+  }
+}
+
+export async function apiCreateUser(payload: { name: string; login: string; email?: string; password: string; accessLevel: 'manager' | 'viewer' }): Promise<{ success: boolean; user?: CompanyUser; error?: string }> {
+  try {
+    const res = await tenantFetch('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    return res.ok ? { success: true, user: data.user } : { success: false, error: data.error || 'Não foi possível criar o usuário.' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Falha de conexão com o servidor.' };
+  }
+}
+
+export async function apiUpdateUser(id: string, payload: { name?: string; login?: string; email?: string; password?: string; accessLevel?: CompanyUserAccessLevel; active?: boolean }): Promise<{ success: boolean; user?: CompanyUser; error?: string }> {
+  try {
+    const res = await tenantFetch(`/api/users/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    return res.ok ? { success: true, user: data.user } : { success: false, error: data.error || 'Não foi possível atualizar o usuário.' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Falha de conexão com o servidor.' };
+  }
+}
+
+export async function apiDeleteUser(id: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await tenantFetch(`/api/users/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    return res.ok ? { success: true } : { success: false, error: data.error || 'Não foi possível excluir o usuário.' };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Falha de conexão com o servidor.' };
   }
