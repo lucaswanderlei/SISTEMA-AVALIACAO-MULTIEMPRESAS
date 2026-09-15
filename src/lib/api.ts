@@ -2,7 +2,7 @@ import { getCompanyId, tenantKey } from './tenant';
 import { RestaurantSettings, RewardOption, Review, Waiter } from '../types';
 
 
-function tenantFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+export function tenantFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   const headers = new Headers(init.headers || {});
   headers.set('X-Company-Id', getCompanyId());
   try {
