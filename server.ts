@@ -92,7 +92,17 @@ async function initPostgres() {
     `);
     await pool.query(`ALTER TABLE avaliacao_empresas ADD COLUMN IF NOT EXISTS login TEXT;`);
     await pool.query(`ALTER TABLE avaliacao_empresas ADD COLUMN IF NOT EXISTS senha_hash TEXT;`);
+    await pool.query(`ALTER TABLE avaliacao_empresas ADD COLUMN IF NOT EXISTS plano TEXT NOT NULL DEFAULT 'pro';`);
+    await pool.query(`ALTER TABLE avaliacao_empresas ADD COLUMN IF NOT EXISTS status_assinatura TEXT NOT NULL DEFAULT 'active';`);
+    await pool.query(`ALTER TABLE avaliacao_empresas ADD COLUMN IF NOT EXISTS vencimento_em TIMESTAMPTZ;`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS avaliacao_empresas_login_lower_idx ON avaliacao_empresas (LOWER(login)) WHERE login IS NOT NULL;`);
+    // Compatibilidade com o campo legado "ativo": empresas anteriormente
+    // desativadas passam a ser tratadas como assinatura suspensa.
+    await pool.query(`
+      UPDATE avaliacao_empresas
+      SET status_assinatura = 'suspended'
+      WHERE ativo = FALSE AND COALESCE(status_assinatura, 'active') <> 'suspended';
+    `);
 
     // Migração automática: empresas antigas passam a ter login = slug/ID e
     // senha = antigo managerPin (ou 1234 quando nunca foi personalizado).
@@ -345,15 +355,17 @@ async function saveDbToPostgres(db: RestaurantDb, explicitCompanyId?: string): P
   // JSON.stringify(activeDb) can become '{}', which would wipe persisted company data.
   const snapshot = JSON.stringify(db);
   const nome = db.settings?.name || empresaId;
+  const initialLogin = String((db.settings as any)?.managerLogin || empresaId).trim().toLowerCase();
+  const initialPasswordHash = hashPassword(String((db.settings as any)?.managerPin || '1234'));
 
   const previous = postgresSaveQueues.get(empresaId) || Promise.resolve();
   const queued = previous.catch(() => {}).then(async () => {
     await pool.query(
-      `INSERT INTO avaliacao_empresas (empresa_id, nome, slug, dados, atualizado_em)
-       VALUES ($1, $2, $1, $3::jsonb, NOW())
+      `INSERT INTO avaliacao_empresas (empresa_id, nome, slug, dados, login, senha_hash, atualizado_em)
+       VALUES ($1, $2, $1, $3::jsonb, $4, $5, NOW())
        ON CONFLICT (empresa_id)
        DO UPDATE SET dados=EXCLUDED.dados, nome=EXCLUDED.nome, atualizado_em=NOW()`,
-      [empresaId, nome, snapshot]
+      [empresaId, nome, snapshot, initialLogin, initialPasswordHash]
     );
     console.log(`[PostgreSQL] Persistência confirmada para empresa ${empresaId}.`);
   });
@@ -409,6 +421,82 @@ function normalizeCompanyId(value: unknown): string {
   return clean || 'demo';
 }
 function currentCompanyId(): string { return tenantContext.getStore()?.companyId || 'demo'; }
+
+type SubscriptionStatus = 'trial' | 'active' | 'suspended';
+type SubscriptionPlan = 'basic' | 'pro' | 'premium';
+
+type CompanyAccessMeta = {
+  empresaId: string;
+  nome: string;
+  ativo: boolean;
+  plan: SubscriptionPlan;
+  subscriptionStatus: SubscriptionStatus;
+  expiresAt: string | null;
+};
+
+function normalizeSubscriptionPlan(value: unknown): SubscriptionPlan {
+  const plan = String(value || '').trim().toLowerCase();
+  return plan === 'basic' || plan === 'premium' ? plan : 'pro';
+}
+
+function normalizeSubscriptionStatus(value: unknown): SubscriptionStatus {
+  const status = String(value || '').trim().toLowerCase();
+  return status === 'trial' || status === 'suspended' ? status : 'active';
+}
+
+function normalizeExpiration(value: unknown): string | null {
+  if (value === null || value === undefined || String(value).trim() === '') return null;
+  const parsed = new Date(String(value));
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
+}
+
+function isCompanyExpired(meta: CompanyAccessMeta): boolean {
+  if (!meta.expiresAt) return false;
+  const expires = new Date(meta.expiresAt).getTime();
+  return Number.isFinite(expires) && expires <= Date.now();
+}
+
+function companyBlock(meta: CompanyAccessMeta): { blocked: boolean; code?: string; message?: string; httpStatus?: number } {
+  if (!meta.ativo || meta.subscriptionStatus === 'suspended') {
+    return {
+      blocked: true,
+      code: 'COMPANY_SUSPENDED',
+      message: 'Esta empresa está temporariamente suspensa. Entre em contato com o suporte da plataforma.',
+      httpStatus: 403,
+    };
+  }
+  if (isCompanyExpired(meta)) {
+    return {
+      blocked: true,
+      code: 'SUBSCRIPTION_EXPIRED',
+      message: 'A assinatura desta empresa venceu. Entre em contato com o suporte para renovação.',
+      httpStatus: 402,
+    };
+  }
+  return { blocked: false };
+}
+
+async function getCompanyAccessMeta(companyId: string): Promise<CompanyAccessMeta | null> {
+  const result = await pool.query(
+    `SELECT empresa_id, nome, ativo, plano, status_assinatura, vencimento_em
+     FROM avaliacao_empresas
+     WHERE empresa_id=$1
+     LIMIT 1`,
+    [companyId]
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    empresaId: String(row.empresa_id),
+    nome: String(row.nome || row.empresa_id),
+    ativo: Boolean(row.ativo),
+    plan: normalizeSubscriptionPlan(row.plano),
+    subscriptionStatus: normalizeSubscriptionStatus(row.status_assinatura),
+    expiresAt: row.vencimento_em ? new Date(row.vencimento_em).toISOString() : null,
+  };
+}
+
 function freshDb(): RestaurantDb {
   return {
     settings: {
@@ -438,12 +526,12 @@ async function loadCompanyDb(companyId: string): Promise<RestaurantDb> {
   if (tenantDbs.has(companyId)) return tenantDbs.get(companyId)!;
 
   const result = await pool.query(
-    'SELECT dados FROM avaliacao_empresas WHERE empresa_id=$1 AND ativo=TRUE LIMIT 1',
+    'SELECT dados FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1',
     [companyId]
   );
 
   if (!result.rows[0]?.dados) {
-    const err: any = new Error(`Empresa "${companyId}" não encontrada ou desativada.`);
+    const err: any = new Error(`Empresa "${companyId}" não encontrada.`);
     err.code = 'COMPANY_NOT_FOUND';
     throw err;
   }
@@ -548,6 +636,8 @@ if (totalEmpresas === 0) {
       SELECT empresa_id
       FROM avaliacao_empresas
       WHERE ativo = TRUE
+        AND COALESCE(status_assinatura, 'active') <> 'suspended'
+        AND (vencimento_em IS NULL OR vencimento_em > NOW())
       ORDER BY
         CASE
           WHEN LOWER(COALESCE(nome, '')) IN ('sr. coxita', 'sr coxita') THEN 0
@@ -604,7 +694,36 @@ if (totalEmpresas === 0) {
       return tenantContext.run({ companyId }, next);
     }
 
+    // These routes need to identify the tenant but must remain reachable even
+    // when the subscription is suspended/expired. This is necessary so the UI
+    // can show the correct message and so the SuperAdmin can still authenticate.
+    if (req.path === '/api/company/status' || req.path === '/api/auth/manager') {
+      return tenantContext.run({ companyId }, next);
+    }
+
     try {
+      const meta = await getCompanyAccessMeta(companyId);
+      if (!meta) {
+        return res.status(404).json({ error: `Empresa "${companyId}" não encontrada.`, code: 'COMPANY_NOT_FOUND' });
+      }
+
+      const session = getAuthSession(req);
+      const hasMasterAccess = session?.role === 'superadmin';
+      const block = companyBlock(meta);
+      if (block.blocked && !hasMasterAccess) {
+        return res.status(block.httpStatus || 403).json({
+          error: block.message,
+          code: block.code,
+          company: {
+            empresaId: meta.empresaId,
+            nome: meta.nome,
+            plan: meta.plan,
+            subscriptionStatus: meta.subscriptionStatus,
+            expiresAt: meta.expiresAt,
+          },
+        });
+      }
+
       await loadCompanyDb(companyId);
       return tenantContext.run({ companyId }, next);
     } catch (err: any) {
@@ -649,17 +768,56 @@ if (totalEmpresas === 0) {
   });
 
   app.get('/api/admin/companies', requireSuperAdmin, async (_req, res) => {
-    const result = await pool.query('SELECT empresa_id, nome, slug, login, ativo, criado_em, atualizado_em FROM avaliacao_empresas ORDER BY criado_em DESC');
+    const result = await pool.query(`
+      SELECT
+        empresa_id,
+        nome,
+        slug,
+        login,
+        ativo,
+        plano,
+        status_assinatura,
+        vencimento_em,
+        criado_em,
+        atualizado_em,
+        CASE
+          WHEN jsonb_typeof(dados->'reviews') = 'array' THEN jsonb_array_length(dados->'reviews')
+          ELSE 0
+        END::int AS total_avaliacoes,
+        CASE
+          WHEN ativo = FALSE OR COALESCE(status_assinatura, 'active') = 'suspended' THEN 'suspended'
+          WHEN vencimento_em IS NOT NULL AND vencimento_em <= NOW() THEN 'expired'
+          WHEN COALESCE(status_assinatura, 'active') = 'trial' THEN 'trial'
+          ELSE 'active'
+        END AS status_efetivo
+      FROM avaliacao_empresas
+      ORDER BY criado_em DESC
+    `);
     res.json({ companies: result.rows });
   });
+
   app.post('/api/admin/companies', requireSuperAdmin, async (req, res) => {
     const empresaId = normalizeCompanyId(req.body?.slug || req.body?.empresaId || req.body?.name);
     const nome = String(req.body?.name || '').trim();
     const login = String(req.body?.login || empresaId).trim().toLowerCase();
     const password = String(req.body?.password || '').trim();
+    const plan = normalizeSubscriptionPlan(req.body?.plan);
+    const subscriptionStatus = normalizeSubscriptionStatus(req.body?.subscriptionStatus || 'trial');
+    const rawExpiresAt = req.body?.expiresAt;
+    let expiresAt = normalizeExpiration(rawExpiresAt);
+
     if (!nome || empresaId === 'demo') return res.status(400).json({ error: 'Informe nome e slug válidos.' });
     if (login.length < 3) return res.status(400).json({ error: 'O login da empresa deve ter pelo menos 3 caracteres.' });
     if (password.length < 4) return res.status(400).json({ error: 'A senha da empresa deve ter pelo menos 4 caracteres.' });
+    if (rawExpiresAt !== undefined && rawExpiresAt !== null && String(rawExpiresAt).trim() !== '' && !expiresAt) {
+      return res.status(400).json({ error: 'Informe uma data de vencimento válida.' });
+    }
+
+    if (!expiresAt && subscriptionStatus !== 'suspended') {
+      const defaultDays = subscriptionStatus === 'trial' ? 7 : 30;
+      expiresAt = new Date(Date.now() + defaultDays * 24 * 60 * 60 * 1000).toISOString();
+    }
+
     const duplicateId = await pool.query('SELECT empresa_id FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1', [empresaId]);
     if (duplicateId.rows[0]) return res.status(409).json({ error: 'Já existe uma empresa com este identificador.' });
     const duplicateLogin = await pool.query('SELECT empresa_id FROM avaliacao_empresas WHERE LOWER(login)=LOWER($1) LIMIT 1', [login]);
@@ -667,15 +825,67 @@ if (totalEmpresas === 0) {
     const db = freshDb();
     db.settings.name = nome;
     (db.settings as any).managerLogin = login;
-    await pool.query(`INSERT INTO avaliacao_empresas (empresa_id,nome,slug,ativo,dados,login,senha_hash) VALUES ($1,$2,$1,TRUE,$3::jsonb,$4,$5)`,
-      [empresaId, nome, JSON.stringify(db), login, hashPassword(password)]);
+    const ativo = subscriptionStatus !== 'suspended';
+    await pool.query(
+      `INSERT INTO avaliacao_empresas
+        (empresa_id,nome,slug,ativo,dados,login,senha_hash,plano,status_assinatura,vencimento_em)
+       VALUES ($1,$2,$1,$3,$4::jsonb,$5,$6,$7,$8,$9)`,
+      [empresaId, nome, ativo, JSON.stringify(db), login, hashPassword(password), plan, subscriptionStatus, expiresAt]
+    );
     tenantDbs.set(empresaId, db);
-    res.status(201).json({ success:true, company:{ empresaId, nome, slug:empresaId, login }, evaluationUrl:`/?empresa=${empresaId}&cliente=1` });
+    res.status(201).json({
+      success: true,
+      company: {
+        empresaId,
+        nome,
+        slug: empresaId,
+        login,
+        plan,
+        subscriptionStatus,
+        expiresAt,
+      },
+      evaluationUrl: `/?empresa=${empresaId}&cliente=1`,
+    });
   });
+
   app.patch('/api/admin/companies/:id/status', requireSuperAdmin, async (req, res) => {
-    const id=normalizeCompanyId(req.params.id); const ativo=Boolean(req.body?.ativo);
-    await pool.query('UPDATE avaliacao_empresas SET ativo=$2, atualizado_em=NOW() WHERE empresa_id=$1',[id,ativo]);
-    res.json({success:true, empresaId:id, ativo});
+    const id = normalizeCompanyId(req.params.id);
+    const requestedStatus = req.body?.subscriptionStatus !== undefined
+      ? normalizeSubscriptionStatus(req.body.subscriptionStatus)
+      : (Boolean(req.body?.ativo) ? 'active' : 'suspended');
+    const ativo = requestedStatus !== 'suspended';
+    const result = await pool.query(
+      `UPDATE avaliacao_empresas
+       SET ativo=$2, status_assinatura=$3, atualizado_em=NOW()
+       WHERE empresa_id=$1
+       RETURNING empresa_id, ativo, plano, status_assinatura, vencimento_em`,
+      [id, ativo, requestedStatus]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'Empresa não encontrada.' });
+    if (!ativo) tenantDbs.delete(id);
+    res.json({ success: true, ...result.rows[0] });
+  });
+
+  app.post('/api/admin/companies/:id/renew', requireSuperAdmin, async (req, res) => {
+    const id = normalizeCompanyId(req.params.id);
+    const rawDays = Number(req.body?.days ?? 30);
+    const days = Number.isFinite(rawDays) ? Math.max(1, Math.min(3650, Math.round(rawDays))) : 30;
+    const result = await pool.query(
+      `UPDATE avaliacao_empresas
+       SET vencimento_em = CASE
+             WHEN vencimento_em IS NULL OR vencimento_em < NOW()
+               THEN NOW() + ($2::int * INTERVAL '1 day')
+             ELSE vencimento_em + ($2::int * INTERVAL '1 day')
+           END,
+           status_assinatura='active',
+           ativo=TRUE,
+           atualizado_em=NOW()
+       WHERE empresa_id=$1
+       RETURNING empresa_id, plano, status_assinatura, ativo, vencimento_em`,
+      [id, days]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'Empresa não encontrada.' });
+    res.json({ success: true, daysAdded: days, ...result.rows[0] });
   });
 
 
@@ -688,25 +898,53 @@ if (totalEmpresas === 0) {
     if (login && login.length < 3) return res.status(400).json({ error: 'O login deve ter pelo menos 3 caracteres.' });
     if (password && password.length < 4) return res.status(400).json({ error: 'A nova senha deve ter pelo menos 4 caracteres.' });
 
-    const result = await pool.query('SELECT dados, login FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1', [id]);
+    const result = await pool.query(
+      'SELECT dados, login, plano, status_assinatura, vencimento_em FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1',
+      [id]
+    );
     if (!result.rows[0]) return res.status(404).json({ error: 'Empresa não encontrada.' });
 
     const nextLogin = login || String(result.rows[0].login || id).toLowerCase();
+    const nextPlan = req.body?.plan !== undefined
+      ? normalizeSubscriptionPlan(req.body.plan)
+      : normalizeSubscriptionPlan(result.rows[0].plano);
+    const nextStatus = req.body?.subscriptionStatus !== undefined
+      ? normalizeSubscriptionStatus(req.body.subscriptionStatus)
+      : normalizeSubscriptionStatus(result.rows[0].status_assinatura);
+    let nextExpiresAt = result.rows[0].vencimento_em ? new Date(result.rows[0].vencimento_em).toISOString() : null;
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'expiresAt')) {
+      const rawExpiresAt = req.body?.expiresAt;
+      if (rawExpiresAt === null || String(rawExpiresAt || '').trim() === '') {
+        nextExpiresAt = null;
+      } else {
+        const normalized = normalizeExpiration(rawExpiresAt);
+        if (!normalized) return res.status(400).json({ error: 'Informe uma data de vencimento válida.' });
+        nextExpiresAt = normalized;
+      }
+    }
+
     const duplicateLogin = await pool.query('SELECT empresa_id FROM avaliacao_empresas WHERE LOWER(login)=LOWER($1) AND empresa_id<>$2 LIMIT 1', [nextLogin, id]);
     if (duplicateLogin.rows[0]) return res.status(409).json({ error: 'Este login já está sendo usado por outra empresa.' });
 
     const dados = result.rows[0].dados || freshDb();
     dados.settings = { ...DEFAULT_SETTINGS, ...(dados.settings || {}), name: nome, managerLogin: nextLogin };
+    const ativo = nextStatus !== 'suspended';
 
     if (password) {
       await pool.query(
-        'UPDATE avaliacao_empresas SET nome=$2, login=$3, senha_hash=$4, dados=$5::jsonb, atualizado_em=NOW() WHERE empresa_id=$1',
-        [id, nome, nextLogin, hashPassword(password), JSON.stringify(dados)]
+        `UPDATE avaliacao_empresas
+         SET nome=$2, login=$3, senha_hash=$4, dados=$5::jsonb,
+             plano=$6, status_assinatura=$7, vencimento_em=$8, ativo=$9, atualizado_em=NOW()
+         WHERE empresa_id=$1`,
+        [id, nome, nextLogin, hashPassword(password), JSON.stringify(dados), nextPlan, nextStatus, nextExpiresAt, ativo]
       );
     } else {
       await pool.query(
-        'UPDATE avaliacao_empresas SET nome=$2, login=$3, dados=$4::jsonb, atualizado_em=NOW() WHERE empresa_id=$1',
-        [id, nome, nextLogin, JSON.stringify(dados)]
+        `UPDATE avaliacao_empresas
+         SET nome=$2, login=$3, dados=$4::jsonb,
+             plano=$5, status_assinatura=$6, vencimento_em=$7, ativo=$8, atualizado_em=NOW()
+         WHERE empresa_id=$1`,
+        [id, nome, nextLogin, JSON.stringify(dados), nextPlan, nextStatus, nextExpiresAt, ativo]
       );
     }
 
@@ -716,7 +954,19 @@ if (totalEmpresas === 0) {
       tenantDbs.set(id, cached);
     }
 
-    res.json({ success: true, empresaId: id, nome, login: nextLogin, passwordChanged: Boolean(password) });
+    if (!ativo) tenantDbs.delete(id);
+
+    res.json({
+      success: true,
+      empresaId: id,
+      nome,
+      login: nextLogin,
+      plan: nextPlan,
+      subscriptionStatus: nextStatus,
+      expiresAt: nextExpiresAt,
+      ativo,
+      passwordChanged: Boolean(password),
+    });
   });
 
   app.delete('/api/admin/companies/:id', requireSuperAdmin, async (req, res) => {
@@ -745,6 +995,38 @@ if (totalEmpresas === 0) {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
+  // Public status endpoint used by the customer page to avoid showing a stale
+  // cached evaluation form when a company is suspended or its subscription has
+  // expired. It intentionally does not expose credentials or private data.
+  app.get('/api/company/status', async (_req, res) => {
+    try {
+      const companyId = currentCompanyId();
+      const meta = await getCompanyAccessMeta(companyId);
+      if (!meta) {
+        return res.status(404).json({
+          accessible: false,
+          code: 'COMPANY_NOT_FOUND',
+          message: 'Empresa não encontrada.',
+        });
+      }
+      const block = companyBlock(meta);
+      return res.json({
+        accessible: !block.blocked,
+        code: block.code || 'OK',
+        message: block.message || null,
+        company: {
+          empresaId: meta.empresaId,
+          nome: meta.nome,
+          plan: meta.plan,
+          subscriptionStatus: meta.subscriptionStatus,
+          expiresAt: meta.expiresAt,
+        },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ accessible: false, code: 'STATUS_ERROR', message: err?.message || 'Erro ao consultar empresa.' });
+    }
+  });
+
   // Login do painel de uma empresa. O login/senha mestre do SuperAdmin também
   // funciona aqui e permite entrar em qualquer tenant sem conhecer a senha local.
   app.post('/api/auth/manager', async (req, res) => {
@@ -752,13 +1034,25 @@ if (totalEmpresas === 0) {
       const { login, password } = req.body || {};
       const companyId = currentCompanyId();
 
+      const meta = await getCompanyAccessMeta(companyId);
+      if (!meta) return res.status(404).json({ error: 'Empresa não encontrada.', code: 'COMPANY_NOT_FOUND' });
+
       if (superAdminCredentialsMatch(login, password)) {
         const token = createAuthSession({ role: 'superadmin' });
         return res.json({ success: true, token, role: 'superadmin', companyId });
       }
 
+      const block = companyBlock(meta);
+      if (block.blocked) {
+        return res.status(block.httpStatus || 403).json({
+          error: block.message,
+          code: block.code,
+          expiresAt: meta.expiresAt,
+        });
+      }
+
       const result = await pool.query(
-        'SELECT login, senha_hash FROM avaliacao_empresas WHERE empresa_id=$1 AND ativo=TRUE LIMIT 1',
+        'SELECT login, senha_hash FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1',
         [companyId]
       );
       const company = result.rows[0];
