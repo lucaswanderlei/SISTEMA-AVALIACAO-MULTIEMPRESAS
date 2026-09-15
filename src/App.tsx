@@ -32,8 +32,6 @@ import {
   saveWaiters,
   isRewardsCustomized,
   isWaitersCustomized,
-  loadSavedPin,
-  savePin,
   loadWhatsAppConfig,
   saveWhatsAppConfig,
   loadDeletedReviewIds,
@@ -52,8 +50,8 @@ import {
   apiSaveWaiters,
   apiClearAllReviews,
   apiSyncPush,
-  apiUpdatePin,
   apiSaveWhatsAppSettings,
+  apiManagerLogin,
 } from './lib/api';
 import { CustomerEvaluation } from './components/CustomerEvaluation';
 import { TableQrDisplay } from './components/TableQrDisplay';
@@ -103,6 +101,7 @@ export default function App() {
       if (!directManagerRoute && (params.get('cliente') || params.get('origem') === 'qrcode' || params.get('mesa'))) {
         try {
           sessionStorage.removeItem(tenantKey('restaurant_manager_auth'));
+          sessionStorage.removeItem(tenantKey('restaurant_manager_token'));
         } catch {}
         return false;
       }
@@ -136,11 +135,13 @@ export default function App() {
   const [notification, setNotification] = useState<string | null>(null);
   const [isFirebaseConnected] = useState<boolean>(false);
 
-  // PIN security modal state
+  // Login + password modal state
   const [showPinModal, setShowPinModal] = useState<boolean>(false);
+  const [loginInput, setLoginInput] = useState<string>('');
   const [pinInput, setPinInput] = useState<string>('');
   const [pinError, setPinError] = useState<string>('');
   const [showPinSecret, setShowPinSecret] = useState<boolean>(false);
+  const [isAuthenticating, setIsAuthenticating] = useState<boolean>(false);
   const [pendingView, setPendingView] = useState<'manager' | 'qr_display'>('manager');
 
   // Check URL query parameters for ?mesa=X or ?cliente=1
@@ -165,6 +166,7 @@ export default function App() {
         setActiveView('customer');
         try {
           sessionStorage.removeItem(tenantKey('restaurant_manager_auth'));
+          sessionStorage.removeItem(tenantKey('restaurant_manager_token'));
         } catch {}
       }
 
@@ -191,7 +193,6 @@ export default function App() {
           const serverSettings = syncData.settings as RestaurantSettings;
           setSettings(serverSettings);
           saveSettings(serverSettings);
-          if (serverSettings.managerPin) savePin(serverSettings.managerPin);
           saveWhatsAppConfig({
             whatsappApiUrl: serverSettings.whatsappApiUrl,
             whatsappApiToken: serverSettings.whatsappApiToken,
@@ -292,22 +293,33 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Request manager access: if already logged in, navigate; otherwise ask for PIN
+  // Request manager access: company credentials or SuperAdmin master credentials.
   const handleRequestManagerAccess = (targetView: 'manager' | 'qr_display' = 'manager') => {
     if (isManagerLoggedIn) {
       setActiveView(targetView);
     } else {
       setPendingView(targetView);
+      setLoginInput(settings.managerLogin || '');
       setPinInput('');
       setPinError('');
       setShowPinModal(true);
     }
   };
 
-  const handleVerifyPin = (e?: React.FormEvent) => {
+  const handleVerifyPin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    const correctPin = (settings.managerPin || '1234').trim();
-    if (pinInput.trim() === correctPin) {
+    if (!loginInput.trim() || !pinInput.trim()) {
+      setPinError('Informe o login e a senha.');
+      return;
+    }
+    setIsAuthenticating(true);
+    setPinError('');
+    try {
+      const result = await apiManagerLogin(loginInput.trim(), pinInput);
+      if (!result.success) {
+        setPinError(result.error || 'Login ou senha inválidos.');
+        return;
+      }
       try {
         sessionStorage.setItem(tenantKey('restaurant_manager_auth'), 'true');
       } catch {}
@@ -316,15 +328,16 @@ export default function App() {
       setShowPinModal(false);
       setPinInput('');
       setPinError('');
-      showToast('Acesso autorizado ao painel do restaurante.');
-    } else {
-      setPinError('PIN incorreto. Tente novamente.');
+      showToast(result.role === 'superadmin' ? 'Acesso mestre autorizado.' : 'Acesso autorizado ao painel do restaurante.');
+    } finally {
+      setIsAuthenticating(false);
     }
   };
 
   const handleLogoutManager = () => {
     try {
       sessionStorage.removeItem(tenantKey('restaurant_manager_auth'));
+      sessionStorage.removeItem(tenantKey('restaurant_manager_token'));
     } catch {}
     setIsManagerLoggedIn(false);
     setActiveView('customer');
@@ -346,8 +359,6 @@ export default function App() {
   const handleSettingsChange = (newSettings: RestaurantSettings) => {
     setSettings(newSettings);
     saveSettings(newSettings);
-
-    if (newSettings.managerPin) savePin(newSettings.managerPin);
 
     saveWhatsAppConfig({
       whatsappApiUrl: newSettings.whatsappApiUrl,
@@ -502,27 +513,24 @@ export default function App() {
     return false;
   };
 
-  const handleDeleteReview = (id: string) => {
-    // 1. Mark as deleted in tombstone storage and ref to block resurrection
-    deletedReviewIdsRef.current.add(id);
-    markReviewDeleted(id);
-    knownReviewIdsRef.current.delete(id);
+  const handleDeleteReview = (idOrIds: string | string[]) => {
+    const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds];
+    const idSet = new Set(ids);
 
-    // 2. Remove immediately from local state and storage
-    const updated = reviews.filter((r) => r.id !== id);
-    handleReviewsChange(updated);
-
-    // 3. Delete from central server backend & disk
-    apiDeleteReview(id).catch((err) => {
-      console.warn('Central server review deletion notice:', err);
+    ids.forEach((id) => {
+      deletedReviewIdsRef.current.add(id);
+      markReviewDeleted(id);
+      knownReviewIdsRef.current.delete(id);
+      apiDeleteReview(id).catch((err) => {
+        console.warn('Central server review deletion notice:', err);
+      });
     });
 
-    // 4. Delete directly from Firestore
-
-    // 5. Update authoritative reviews state on server
+    const updated = reviews.filter((r) => !idSet.has(r.id));
+    handleReviewsChange(updated);
     apiSyncPush({ reviews: updated }).catch(() => {});
 
-    showToast('Registro de cliente/avaliação excluído com sucesso.');
+    showToast(ids.length > 1 ? 'Cadastro do cliente e histórico de avaliações excluídos.' : 'Registro de cliente/avaliação excluído com sucesso.');
   };
 
   const handleClearAllReviews = () => {
@@ -798,116 +806,48 @@ export default function App() {
               <div className="w-14 h-14 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto border border-rose-100 shadow-sm">
                 <Lock className="w-7 h-7" />
               </div>
-              <h3 className="text-lg font-black text-stone-900">
-                Acesso Restrito à Gerência
-              </h3>
+              <h3 className="text-lg font-black text-stone-900">Acesso Restrito à Gerência</h3>
               <p className="text-xs text-stone-500 leading-relaxed px-2">
-                Digite o PIN de 4 dígitos para acessar o painel administrativo e as configurações do {settings.name}.
+                Entre com o login e a senha desta empresa. O SuperAdmin também pode usar o login e a senha mestre para acessar qualquer empresa.
               </p>
             </div>
 
-            {/* PIN Form */}
             <form onSubmit={handleVerifyPin} className="space-y-4">
               <div className="space-y-1.5">
+                <label className="text-xs font-bold text-stone-700">Login</label>
+                <input
+                  type="text"
+                  autoFocus
+                  autoComplete="username"
+                  value={loginInput}
+                  onChange={(e) => { setLoginInput(e.target.value); if (pinError) setPinError(''); }}
+                  placeholder="Login da empresa"
+                  className="w-full py-3 px-4 text-sm font-bold bg-stone-50 border-2 border-stone-300 rounded-2xl outline-none focus:border-rose-600 focus:bg-white"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-stone-700">Senha</label>
                 <div className="relative">
                   <input
                     type={showPinSecret ? 'text' : 'password'}
-                    maxLength={8}
-                    autoFocus
+                    autoComplete="current-password"
                     value={pinInput}
-                    onChange={(e) => {
-                      setPinInput(e.target.value);
-                      if (pinError) setPinError('');
-                    }}
-                    placeholder="••••"
-                    className={`w-full py-3.5 px-4 text-center tracking-[0.4em] font-mono text-xl font-bold bg-stone-50 border-2 rounded-2xl outline-none transition ${
-                      pinError
-                        ? 'border-rose-500 bg-rose-50/50 text-rose-900'
-                        : 'border-stone-300 focus:border-rose-600 bg-stone-50 focus:bg-white'
-                    }`}
+                    onChange={(e) => { setPinInput(e.target.value); if (pinError) setPinError(''); }}
+                    placeholder="Sua senha"
+                    className={`w-full py-3 px-4 pr-12 text-sm font-bold bg-stone-50 border-2 rounded-2xl outline-none transition ${pinError ? 'border-rose-500 bg-rose-50/50 text-rose-900' : 'border-stone-300 focus:border-rose-600 focus:bg-white'}`}
                   />
-                  <button
-                    type="button"
-                    onClick={() => setShowPinSecret(!showPinSecret)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 p-2 text-stone-400 hover:text-stone-600 transition cursor-pointer"
-                  >
+                  <button type="button" onClick={() => setShowPinSecret(!showPinSecret)} className="absolute right-3 top-1/2 -translate-y-1/2 p-2 text-stone-400 hover:text-stone-600">
                     {showPinSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
-
-                {pinError && (
-                  <p className="text-xs text-rose-600 font-bold text-center flex items-center justify-center gap-1 pt-1">
-                    <ShieldAlert className="w-3.5 h-3.5" />
-                    <span>{pinError}</span>
-                  </p>
-                )}
+                {pinError && <p className="text-xs text-rose-600 font-bold text-center flex items-center justify-center gap-1 pt-1"><ShieldAlert className="w-3.5 h-3.5"/><span>{pinError}</span></p>}
               </div>
-
-              {/* Quick Touch Keypad for Tablets & Mobiles */}
-              <div className="grid grid-cols-3 gap-1.5 pt-1">
-                {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
-                  <button
-                    key={digit}
-                    type="button"
-                    onClick={() => {
-                      if (pinInput.length < 8) {
-                        setPinInput((prev) => prev + digit);
-                        if (pinError) setPinError('');
-                      }
-                    }}
-                    className="py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-800 text-sm font-black rounded-xl transition active:scale-95 cursor-pointer"
-                  >
-                    {digit}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => setPinInput('')}
-                  className="py-2.5 bg-stone-100 hover:bg-rose-100 text-stone-500 hover:text-rose-700 text-xs font-bold rounded-xl transition active:scale-95 cursor-pointer"
-                >
-                  Limpar
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (pinInput.length < 8) {
-                      setPinInput((prev) => prev + '0');
-                      if (pinError) setPinError('');
-                    }
-                  }}
-                  className="py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-800 text-sm font-black rounded-xl transition active:scale-95 cursor-pointer"
-                >
-                  0
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPinInput((prev) => prev.slice(0, -1))}
-                  className="py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-600 text-xs font-bold rounded-xl transition active:scale-95 cursor-pointer"
-                >
-                  ⌫
-                </button>
-              </div>
-
-              {/* Submit & Cancel */}
               <div className="space-y-2 pt-2">
-                <button
-                  type="submit"
-                  className="w-full py-3.5 px-4 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black rounded-xl transition shadow-md shadow-rose-600/20 flex items-center justify-center gap-2 cursor-pointer"
-                >
+                <button type="submit" disabled={isAuthenticating} className="w-full py-3.5 px-4 bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white text-xs font-black rounded-xl transition shadow-md shadow-rose-600/20 flex items-center justify-center gap-2">
                   <ShieldCheck className="w-4 h-4" />
-                  <span>Entrar no Painel</span>
+                  <span>{isAuthenticating ? 'Verificando...' : 'Entrar no Painel'}</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowPinModal(false);
-                    setPinInput('');
-                    setPinError('');
-                  }}
-                  className="w-full py-2 text-stone-500 hover:text-stone-800 text-xs font-bold transition cursor-pointer"
-                >
-                  Voltar para Avaliação do Cliente
-                </button>
+                <button type="button" onClick={() => { setShowPinModal(false); setPinInput(''); setPinError(''); }} className="w-full py-2 text-stone-500 hover:text-stone-800 text-xs font-bold transition">Voltar para Avaliação do Cliente</button>
               </div>
             </form>
           </div>

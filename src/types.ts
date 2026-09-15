@@ -21,6 +21,7 @@ export interface Review {
   tableNumber?: number;
   customerName?: string;
   customerPhone?: string;
+  customerPhoneNormalized?: string;
   waiterId?: string;
   waiterName?: string;
   waiterRating?: number; // 1 to 5
@@ -86,5 +87,6 @@ export interface RestaurantSettings {
   whatsappTemplateName?: string; // Nome do template pré-aprovado pela Meta (avaliacao_brinde)
   whatsappTemplateLanguage?: string; // Idioma do template (ex: pt_BR, en_US)
   whatsappWebhookVerifyToken?: string; // Token de verificação do webhook da Meta
-  managerPin?: string;         // Senha/PIN de 4 dígitos para proteger o Painel do Restaurante (padrão: 1234)
+  managerPin?: string;         // Campo legado (não é mais usado para autenticação)
+  managerLogin?: string;       // Login da empresa para acessar o painel
 }
