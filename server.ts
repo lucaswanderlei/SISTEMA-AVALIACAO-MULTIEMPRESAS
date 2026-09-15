@@ -353,6 +353,11 @@ Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos voc
   whatsappTemplateName: 'avaliacao_brinde',
   whatsappTemplateLanguage: 'pt_BR',
   whatsappWebhookVerifyToken: 'srcoxita_webhook_2026',
+  legalName: '',
+  privacyContactEmail: '',
+  privacyContactPhone: '',
+  privacyNoticeRequired: true,
+  marketingOptInEnabled: true,
 };
 
 const DEFAULT_REWARDS = [
@@ -442,11 +447,28 @@ const DEFAULT_WAITERS = [
   },
 ];
 
+interface PrivacyRequestRecord {
+  id: string;
+  type: 'access' | 'correction' | 'deletion' | 'marketing_revocation';
+  name?: string;
+  phone: string;
+  normalizedPhone: string;
+  email?: string;
+  message?: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'rejected';
+  createdAt: string;
+  updatedAt?: string;
+  completedAt?: string;
+  internalNote?: string;
+  result?: string;
+}
+
 interface RestaurantDb {
   settings: typeof DEFAULT_SETTINGS;
   rewards: any[];
   waiters: any[];
   reviews: any[];
+  privacyRequests: PrivacyRequestRecord[];
 }
 
 function loadDb(): RestaurantDb {
@@ -460,6 +482,7 @@ function loadDb(): RestaurantDb {
           rewards: Array.isArray(parsed.rewards) && parsed.rewards.length > 0 ? parsed.rewards : DEFAULT_REWARDS,
           waiters: Array.isArray(parsed.waiters) && parsed.waiters.length > 0 ? parsed.waiters : DEFAULT_WAITERS,
           reviews: Array.isArray(parsed.reviews) ? parsed.reviews : [],
+          privacyRequests: Array.isArray(parsed.privacyRequests) ? parsed.privacyRequests : [],
         };
       }
     }
@@ -477,6 +500,7 @@ function loadDb(): RestaurantDb {
           rewards: Array.isArray(parsed.rewards) && parsed.rewards.length > 0 ? parsed.rewards : DEFAULT_REWARDS,
           waiters: Array.isArray(parsed.waiters) && parsed.waiters.length > 0 ? parsed.waiters : DEFAULT_WAITERS,
           reviews: Array.isArray(parsed.reviews) ? parsed.reviews : [],
+          privacyRequests: Array.isArray(parsed.privacyRequests) ? parsed.privacyRequests : [],
         };
       }
     }
@@ -489,6 +513,7 @@ function loadDb(): RestaurantDb {
     rewards: DEFAULT_REWARDS,
     waiters: DEFAULT_WAITERS,
     reviews: [],
+    privacyRequests: [],
   };
 }
 const postgresSaveQueues = new Map<string, Promise<void>>();
@@ -691,7 +716,8 @@ function freshDb(): RestaurantDb {
       { id:'reward-1', title:'BRINDE ESPECIAL', description:'Cortesia especial oferecida pelo estabelecimento.', iconName:'Gift', category:'appetizer', enabled:true, probabilityWeight:100 }
     ],
     waiters: [],
-    reviews: []
+    reviews: [],
+    privacyRequests: []
   };
 }
 async function loadCompanyDb(companyId: string): Promise<RestaurantDb> {
@@ -714,6 +740,7 @@ async function loadCompanyDb(companyId: string): Promise<RestaurantDb> {
     rewards: Array.isArray(parsed.rewards) ? parsed.rewards : [],
     waiters: Array.isArray(parsed.waiters) ? parsed.waiters : [],
     reviews: Array.isArray(parsed.reviews) ? parsed.reviews : [],
+    privacyRequests: Array.isArray(parsed.privacyRequests) ? parsed.privacyRequests : [],
   };
 
   tenantDbs.set(companyId, db);
@@ -746,6 +773,7 @@ async function loadAllCompaniesFromPostgres(): Promise<number> {
         rewards: Array.isArray(parsed.rewards) ? parsed.rewards : [],
         waiters: Array.isArray(parsed.waiters) ? parsed.waiters : [],
         reviews: Array.isArray(parsed.reviews) ? parsed.reviews : [],
+        privacyRequests: Array.isArray(parsed.privacyRequests) ? parsed.privacyRequests : [],
       });
     }
 
@@ -1741,6 +1769,7 @@ if (totalEmpresas === 0) {
         rewards: Array.isArray(persisted.rewards) ? persisted.rewards : [],
         waiters: Array.isArray(persisted.waiters) ? persisted.waiters : [],
         reviews: Array.isArray(persisted.reviews) ? persisted.reviews : [],
+        privacyRequests: Array.isArray(persisted.privacyRequests) ? persisted.privacyRequests : [],
       };
 
       tenantDbs.set(companyId, db);
@@ -1781,6 +1810,13 @@ if (totalEmpresas === 0) {
       const review = req.body;
       if (!review || !review.id) {
         return res.status(400).json({ error: 'Dados da avaliação inválidos.' });
+      }
+      if (activeDb.settings.privacyNoticeRequired !== false && !review.privacyAcceptedAt) {
+        return res.status(400).json({ error: 'Confirme a leitura do Aviso de Privacidade antes de concluir a avaliação.' });
+      }
+      if (review.marketingConsent !== true) {
+        review.marketingConsent = false;
+        delete review.marketingConsentAt;
       }
       if (review.customerPhone) {
         let digits = String(review.customerPhone).replace(/\D/g, '').replace(/^0+/, '');
@@ -1845,6 +1881,162 @@ if (totalEmpresas === 0) {
       console.error('Error saving review in /api/reviews:', err);
       return res.status(500).json({ error: err?.message || 'Erro ao processar avaliação.' });
     }
+  });
+
+  // Solicitações públicas de privacidade (LGPD). O pedido NÃO executa exclusão sozinho:
+  // ele entra na fila da empresa para que a identidade do solicitante possa ser confirmada.
+  app.post('/api/privacy/requests', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const type = String(body.type || '').trim() as PrivacyRequestRecord['type'];
+      const allowed = new Set(['access', 'correction', 'deletion', 'marketing_revocation']);
+      if (!allowed.has(type)) return res.status(400).json({ error: 'Tipo de solicitação inválido.' });
+
+      const phone = String(body.phone || '').trim();
+      const normalizedPhone = normalizeDashboardPhone(phone);
+      if (normalizedPhone.length < 10) return res.status(400).json({ error: 'Informe o telefone com DDD usado na avaliação.' });
+
+      const email = String(body.email || '').trim().slice(0, 180);
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).json({ error: 'E-mail inválido.' });
+      }
+
+      const limiter = consumeRateLimit(rateLimitKey(req, 'privacy-request', normalizedPhone), 5, 24 * 60 * 60 * 1000);
+      if (!limiter.allowed) {
+        res.setHeader('Retry-After', String(limiter.retryAfterSeconds));
+        return res.status(429).json({ error: 'Muitas solicitações para este contato. Tente novamente mais tarde.' });
+      }
+
+      const request: PrivacyRequestRecord = {
+        id: `privacy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        type,
+        name: String(body.name || '').trim().slice(0, 120) || undefined,
+        phone,
+        normalizedPhone,
+        email: email || undefined,
+        message: String(body.message || '').trim().slice(0, 1000) || undefined,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+      };
+      activeDb.privacyRequests = [request, ...(activeDb.privacyRequests || [])];
+      saveDb(activeDb);
+      return res.status(201).json({ success: true, protocol: request.id });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Erro ao registrar solicitação de privacidade.' });
+    }
+  });
+
+  app.get('/api/privacy/requests', requireCompanyManager, (_req, res) => {
+    const rows = [...(activeDb.privacyRequests || [])].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return res.json({ success: true, requests: rows });
+  });
+
+  app.patch('/api/privacy/requests/:id', requireCompanyEditor, (req, res) => {
+    const id = String(req.params.id || '');
+    const request = (activeDb.privacyRequests || []).find((item) => item.id === id);
+    if (!request) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    const status = String(req.body?.status || request.status) as PrivacyRequestRecord['status'];
+    if (!['pending', 'in_progress', 'completed', 'rejected'].includes(status)) return res.status(400).json({ error: 'Status inválido.' });
+    request.status = status;
+    request.internalNote = String(req.body?.internalNote || request.internalNote || '').trim().slice(0, 1000) || undefined;
+    request.updatedAt = new Date().toISOString();
+    if (status === 'completed') request.completedAt = request.completedAt || new Date().toISOString();
+    saveDb(activeDb);
+    return res.json({ success: true, request });
+  });
+
+  app.get('/api/privacy/requests/:id/export', requireCompanyManager, (req, res) => {
+    const id = String(req.params.id || '');
+    const request = (activeDb.privacyRequests || []).find((item) => item.id === id);
+    if (!request) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    const target = request.normalizedPhone;
+    const reviews = (activeDb.reviews || []).filter((review: any) => {
+      const current = normalizeDashboardPhone(review.customerPhoneNormalized || review.customerPhone);
+      return Boolean(target && current === target);
+    });
+    const payload = {
+      format: 'avaliaeganha-privacy-access',
+      version: 1,
+      generatedAt: new Date().toISOString(),
+      protocol: request.id,
+      request: {
+        type: request.type,
+        name: request.name || '',
+        phone: request.phone,
+        email: request.email || '',
+        createdAt: request.createdAt,
+      },
+      data: { reviews },
+      note: 'Arquivo gerado para atendimento de solicitação de privacidade. Confirme a identidade do solicitante antes de compartilhar.'
+    };
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="dados_cliente_${request.id.slice(-8)}.json"`);
+    return res.send(JSON.stringify(payload, null, 2));
+  });
+
+  app.post('/api/privacy/requests/:id/revoke-marketing', requireCompanyEditor, (req, res) => {
+    const id = String(req.params.id || '');
+    const request = (activeDb.privacyRequests || []).find((item) => item.id === id);
+    if (!request) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    if (request.type !== 'marketing_revocation') return res.status(400).json({ error: 'Esta ação é permitida apenas para pedidos de interrupção de comunicações promocionais.' });
+
+    const target = request.normalizedPhone;
+    let affected = 0;
+    const now = new Date().toISOString();
+    activeDb.reviews = (activeDb.reviews || []).map((review: any) => {
+      const current = normalizeDashboardPhone(review.customerPhoneNormalized || review.customerPhone);
+      if (!target || current !== target) return review;
+      affected += 1;
+      const updated = { ...review, marketingConsent: false, marketingConsentRevokedAt: now };
+      delete updated.marketingConsentAt;
+      return updated;
+    });
+    request.status = 'completed';
+    request.completedAt = now;
+    request.updatedAt = now;
+    request.result = `Consentimento promocional revogado em ${affected} avaliação(ões) vinculada(s) ao telefone informado.`;
+    saveDb(activeDb);
+    return res.json({ success: true, affected, request, reviews: activeDb.reviews });
+  });
+
+  // A anonimização é deliberadamente restrita a proprietário/SuperAdmin e exige ação explícita.
+  // As notas agregadas permanecem para estatísticas, enquanto nome/telefone e consentimento promocional são removidos.
+  app.post('/api/privacy/requests/:id/anonymize', requireCompanyOwner, (req, res) => {
+    const id = String(req.params.id || '');
+    const request = (activeDb.privacyRequests || []).find((item) => item.id === id);
+    if (!request) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    if (request.type !== 'deletion') return res.status(400).json({ error: 'A anonimização automática é permitida apenas para pedidos de exclusão.' });
+
+    const target = request.normalizedPhone;
+    let affected = 0;
+    const now = new Date().toISOString();
+    activeDb.reviews = (activeDb.reviews || []).map((review: any) => {
+      const current = normalizeDashboardPhone(review.customerPhoneNormalized || review.customerPhone);
+      if (!target || current !== target) return review;
+      affected += 1;
+      const cleaned = { ...review };
+      delete cleaned.customerName;
+      delete cleaned.customerPhone;
+      delete cleaned.customerPhoneNormalized;
+      delete cleaned.tableNumber;
+      delete cleaned.claimedTable;
+      delete cleaned.criticism;
+      delete cleaned.suggestion;
+      delete cleaned.waiterCompliment;
+      delete cleaned.waiterCompliments;
+      delete cleaned.marketingConsentAt;
+      cleaned.marketingConsent = false;
+      cleaned.marketingConsentRevokedAt = now;
+      cleaned.privacyAnonymizedAt = now;
+      return cleaned;
+    });
+
+    request.status = 'completed';
+    request.completedAt = now;
+    request.updatedAt = now;
+    request.result = `${affected} avaliação(ões) tiveram identificadores, dados de mesa e campos de texto livre anonimizados/removidos.`;
+    saveDb(activeDb);
+    return res.json({ success: true, affected, request, reviews: activeDb.reviews });
   });
 
   // Validate / Claim Reward Voucher
@@ -1976,6 +2168,7 @@ if (totalEmpresas === 0) {
         rewards: [],
         waiters: [],
         reviews: [],
+        privacyRequests: [],
       };
       current.settings = { ...DEFAULT_SETTINGS, ...(persisted.settings || {}) };
       if (Array.isArray(persisted.rewards)) current.rewards = persisted.rewards;
@@ -2156,6 +2349,7 @@ if (totalEmpresas === 0) {
         rewards: Array.isArray(persisted.rewards) ? persisted.rewards : [],
         waiters: Array.isArray(persisted.waiters) ? persisted.waiters : [],
         reviews: Array.isArray(persisted.reviews) ? persisted.reviews : [],
+        privacyRequests: Array.isArray(persisted.privacyRequests) ? persisted.privacyRequests : [],
       });
 
       return res.json({
@@ -2190,12 +2384,12 @@ if (totalEmpresas === 0) {
   // Export detalhado de avaliações. Disponível para qualquer usuário autenticado da empresa.
   app.get('/api/exports/reviews.csv', requireCompanyManager, (_req, res) => {
     const rows = Array.isArray(activeDb.reviews) ? activeDb.reviews : [];
-    const headers = ['ID','Nome','Telefone','Mesa','Atendente','Nota Atendimento','Nota Ambiente','Nota Produtos','Nota Espera','Media Geral','Destaques','Critica','Sugestao','Brinde','Codigo Voucher','Resgatado','Data Avaliacao','Data Resgate'];
+    const headers = ['ID','Nome','Telefone','Mesa','Atendente','Nota Atendimento','Nota Ambiente','Nota Produtos','Nota Espera','Media Geral','Destaques','Critica','Sugestao','Brinde','Codigo Voucher','Resgatado','Aviso Privacidade','Versao Aviso','Aceitou Ofertas','Data Avaliacao','Data Resgate'];
     const lines = rows.map((r: any) => [
       r.id, r.customerName || '', r.customerPhone || '', r.tableNumber || '', r.waiterName || '',
       r.ratings?.service ?? '', r.ratings?.ambiance ?? '', r.ratings?.products ?? '', r.ratings?.waitTime ?? '', reviewAverage(r).toFixed(2),
       Array.isArray(r.quickTags) ? r.quickTags.join(' | ') : '', r.criticism || '', r.suggestion || '', r.rewardTitle || '', r.rewardCode || '',
-      r.rewardClaimed ? 'Sim' : 'Nao', r.createdAt || '', r.claimedAt || ''
+      r.rewardClaimed ? 'Sim' : 'Nao', r.privacyAcceptedAt || '', r.privacyNoticeVersion || '', r.marketingConsent ? 'Sim' : 'Nao', r.createdAt || '', r.claimedAt || ''
     ].map(csvCell).join(';'));
     const name = safeExportFilePart(activeDb.settings?.name || currentCompanyId());
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -2212,7 +2406,7 @@ if (totalEmpresas === 0) {
     for (const r of reviews as any[]) {
       const phone = normalizeDashboardPhone(r.customerPhoneNormalized || r.customerPhone);
       const key = phone || `sem-telefone:${r.id}`;
-      const current = grouped.get(key) || { phone: r.customerPhone || '', normalizedPhone: phone, name: r.customerName || '', count: 0, firstAt: r.createdAt || '', lastAt: r.createdAt || '', avgSum: 0, lastReward: '', lastRewardCode: '', lastClaimed: false };
+      const current = grouped.get(key) || { phone: r.customerPhone || '', normalizedPhone: phone, name: r.customerName || '', count: 0, firstAt: r.createdAt || '', lastAt: r.createdAt || '', avgSum: 0, lastReward: '', lastRewardCode: '', lastClaimed: false, marketingConsent: false };
       current.count += 1;
       current.avgSum += reviewAverage(r);
       if (r.customerName) current.name = r.customerName;
@@ -2221,11 +2415,12 @@ if (totalEmpresas === 0) {
       current.lastReward = r.rewardTitle || current.lastReward;
       current.lastRewardCode = r.rewardCode || current.lastRewardCode;
       current.lastClaimed = Boolean(r.rewardClaimed);
+      current.marketingConsent = Boolean(r.marketingConsent);
       grouped.set(key, current);
     }
-    const headers = ['Nome','Telefone','Telefone Normalizado','Total Avaliacoes','Primeira Avaliacao','Ultima Avaliacao','Media Geral','Ultimo Brinde','Ultimo Codigo','Ultimo Brinde Resgatado'];
+    const headers = ['Nome','Telefone','Telefone Normalizado','Total Avaliacoes','Primeira Avaliacao','Ultima Avaliacao','Media Geral','Ultimo Brinde','Ultimo Codigo','Ultimo Brinde Resgatado','Aceitou Ofertas'];
     const lines = [...grouped.values()].sort((a,b) => new Date(String(b.lastAt || 0)).getTime() - new Date(String(a.lastAt || 0)).getTime()).map((c: any) => [
-      c.name, c.phone, c.normalizedPhone, c.count, c.firstAt, c.lastAt, (c.avgSum / Math.max(1,c.count)).toFixed(2), c.lastReward, c.lastRewardCode, c.lastClaimed ? 'Sim' : 'Nao'
+      c.name, c.phone, c.normalizedPhone, c.count, c.firstAt, c.lastAt, (c.avgSum / Math.max(1,c.count)).toFixed(2), c.lastReward, c.lastRewardCode, c.lastClaimed ? 'Sim' : 'Nao', c.marketingConsent ? 'Sim' : 'Nao'
     ].map(csvCell).join(';'));
     const name = safeExportFilePart(activeDb.settings?.name || currentCompanyId());
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -2270,6 +2465,7 @@ if (totalEmpresas === 0) {
         rewards: data.rewards,
         waiters: data.waiters,
         reviews: data.reviews,
+        privacyRequests: Array.isArray(data.privacyRequests) ? data.privacyRequests : [],
       };
       tenantDbs.set(companyId, restoredDb);
       await saveDbToPostgres(restoredDb, companyId);
