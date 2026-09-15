@@ -750,12 +750,27 @@ if (totalEmpresas === 0) {
     next();
   }
 
-  function requireCompanyManager(req: express.Request, res: express.Response, next: express.NextFunction) {
+  function sessionCanManageCompany(req: express.Request, companyId = currentCompanyId()): boolean {
     const session = getAuthSession(req);
-    const companyId = currentCompanyId();
-    if (!session) return res.status(401).json({ error: 'Faça login novamente.' });
-    if (session.role === 'superadmin' || (session.role === 'manager' && session.companyId === companyId)) return next();
+    return Boolean(session && (session.role === 'superadmin' || (session.role === 'manager' && session.companyId === companyId)));
+  }
+
+  function requireCompanyManager(req: express.Request, res: express.Response, next: express.NextFunction) {
+    if (!getAuthSession(req)) return res.status(401).json({ error: 'Faça login novamente.' });
+    if (sessionCanManageCompany(req)) return next();
     return res.status(403).json({ error: 'Sessão sem permissão para esta empresa.' });
+  }
+
+  function publicSettingsOnly(settings: Record<string, any>) {
+    const safe = { ...settings };
+    // Nunca exponha credenciais, tokens ou dados de gerência na página pública.
+    delete safe.managerPin;
+    delete safe.managerLogin;
+    delete safe.whatsappApiUrl;
+    delete safe.whatsappApiToken;
+    delete safe.whatsappWebhookVerifyToken;
+    delete safe.whatsappCustomMessage;
+    return safe;
   }
 
   app.post('/api/admin/login', (req, res) => {
@@ -1116,13 +1131,13 @@ if (totalEmpresas === 0) {
 
       tenantDbs.set(companyId, db);
 
-      const publicSettings: any = { ...db.settings };
-      delete publicSettings.managerPin;
+      const canManage = sessionCanManageCompany(_req, companyId);
+      const responseSettings: any = canManage ? { ...db.settings } : publicSettingsOnly(db.settings as any);
       return res.json({
-        settings: publicSettings,
+        settings: responseSettings,
         rewards: db.rewards,
         waiters: db.waiters,
-        reviews: db.reviews,
+        reviews: canManage ? db.reviews : [],
         serverTime: new Date().toISOString(),
         source: 'postgresql',
       });
@@ -1135,7 +1150,7 @@ if (totalEmpresas === 0) {
   });
 
   // Get Reviews
-  app.get('/api/reviews', async (_req, res) => {
+  app.get('/api/reviews', requireCompanyManager, async (_req, res) => {
    
     res.json({
       reviews: activeDb.reviews,
@@ -1160,10 +1175,47 @@ if (totalEmpresas === 0) {
 
       // Check if review already exists
       const existingIdx = activeDb.reviews.findIndex((r: any) => r.id === review.id);
+      const isNewReview = existingIdx < 0;
       if (existingIdx >= 0) {
         activeDb.reviews[existingIdx] = { ...activeDb.reviews[existingIdx], ...review };
       } else {
         activeDb.reviews.unshift(review);
+      }
+
+      // O envio automático silencioso é feito somente no servidor. Assim as
+      // credenciais da Meta/WhatsApp nunca precisam ser entregues ao navegador
+      // público e o endpoint genérico de envio pode permanecer protegido.
+      if (
+        isNewReview &&
+        activeDb.settings.autoSendWhatsApp &&
+        (activeDb.settings.autoSendMode || 'silent_api') === 'silent_api' &&
+        review.customerPhone &&
+        String(review.customerPhone).replace(/\D/g, '').length >= 8
+      ) {
+        try {
+          const message = buildOfficialVoucherMessage({
+            customerName: review.customerName,
+            rewardTitle: review.rewardTitle,
+            rewardCode: review.rewardCode,
+            restaurantName: activeDb.settings.name,
+            availableFrom: review.availableFrom,
+            expiresAt: review.expiresAt,
+          });
+          const result = await executeWhatsAppSend({
+            phone: review.customerPhone,
+            message,
+            customerName: review.customerName,
+            rewardTitle: review.rewardTitle,
+            rewardCode: review.rewardCode,
+            restaurantName: activeDb.settings.name,
+            templateMode: 'brinde_template',
+          });
+          review.whatsappStatus = result.success ? 'sent_silently' : 'failed';
+          review.whatsappSentAt = new Date().toISOString();
+        } catch (sendErr) {
+          console.warn('[WhatsApp] Falha no envio automático da nova avaliação:', sendErr);
+          review.whatsappStatus = 'failed';
+        }
       }
 
       saveDb(activeDb);
@@ -1172,7 +1224,6 @@ if (totalEmpresas === 0) {
       return res.json({
         success: true,
         review,
-        reviews: activeDb.reviews,
       });
     } catch (err: any) {
       console.error('Error saving review in /api/reviews:', err);
@@ -1181,7 +1232,7 @@ if (totalEmpresas === 0) {
   });
 
   // Validate / Claim Reward Voucher
-  app.post('/api/reviews/validate', async (req, res) => {
+  app.post('/api/reviews/validate', requireCompanyManager, async (req, res) => {
     try {
       const { code, tableNumber } = req.body;
       if (!code) {
@@ -1241,7 +1292,7 @@ if (totalEmpresas === 0) {
   });
 
   // Delete Single Review
-  app.delete('/api/reviews/:id', async (req, res) => {
+  app.delete('/api/reviews/:id', requireCompanyManager, async (req, res) => {
     try {
       const { id } = req.params;
       if (!id) {
@@ -1265,7 +1316,7 @@ if (totalEmpresas === 0) {
   });
 
   // Clear All Reviews
-  app.delete('/api/reviews', async (_req, res) => {
+  app.delete('/api/reviews', requireCompanyManager, async (_req, res) => {
     try {
       activeDb.reviews = [];
       saveDb(activeDb);
@@ -1278,7 +1329,7 @@ if (totalEmpresas === 0) {
   });
 
   // Update Settings
-  app.post('/api/settings', async (req, res) => {
+  app.post('/api/settings', requireCompanyManager, async (req, res) => {
     try {
       const companyId = currentCompanyId();
       const incoming = req.body && typeof req.body === 'object' ? req.body : {};
@@ -1334,7 +1385,7 @@ if (totalEmpresas === 0) {
   });
 
   // Dedicated PIN Update Endpoint
-  app.post('/api/settings/pin', (req, res) => {
+  app.post('/api/settings/pin', requireCompanyManager, (req, res) => {
     try {
       const { pin } = req.body || {};
       if (!pin || typeof pin !== 'string' || pin.trim().length < 3) {
@@ -1351,7 +1402,7 @@ if (totalEmpresas === 0) {
   });
 
   // Dedicated WhatsApp API Settings Update Endpoint
-  app.post('/api/settings/whatsapp', (req, res) => {
+  app.post('/api/settings/whatsapp', requireCompanyManager, (req, res) => {
     try {
       const { whatsappApiUrl, whatsappApiToken, whatsappCustomMessage, autoSendWhatsApp, autoSendMode } = req.body || {};
       if (whatsappApiUrl !== undefined) {
@@ -1394,7 +1445,7 @@ if (totalEmpresas === 0) {
   });
 
   // Update Rewards
-  app.post('/api/rewards', async (req, res) => {
+  app.post('/api/rewards', requireCompanyManager, async (req, res) => {
     try {
       if (!Array.isArray(req.body)) {
         return res.status(400).json({ error: 'Lista de brindes inválida.' });
@@ -1418,7 +1469,7 @@ if (totalEmpresas === 0) {
   });
 
   // Update Waiters
-  app.post('/api/waiters', async (req, res) => {
+  app.post('/api/waiters', requireCompanyManager, async (req, res) => {
     try {
       if (!Array.isArray(req.body)) {
         return res.status(400).json({ error: 'Lista de garçons inválida.' });
@@ -1442,7 +1493,7 @@ if (totalEmpresas === 0) {
   });
 
   // Full Database Sync Push (Saves rewards, waiters, settings, reviews atomically)
-  app.post('/api/sync/push', async (req, res) => {
+  app.post('/api/sync/push', requireCompanyManager, async (req, res) => {
     const client = await pool.connect();
     try {
       const companyId = currentCompanyId();
@@ -1506,14 +1557,14 @@ if (totalEmpresas === 0) {
   });
 
   // Export full database JSON file
-  app.get('/api/database/export', (_req, res) => {
+  app.get('/api/database/export', requireCompanyManager, (_req, res) => {
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Content-Disposition', 'attachment; filename="banco_restaurante_backup.json"');
     return res.send(JSON.stringify(activeDb, null, 2));
   });
 
   // Import full database JSON file
-  app.post('/api/database/import', (req, res) => {
+  app.post('/api/database/import', requireCompanyManager, (req, res) => {
     try {
       const data = req.body;
       if (!data || typeof data !== 'object') {
@@ -1964,7 +2015,7 @@ Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos voc
   }
 
   // Background WhatsApp Send API (Sends without opening WhatsApp on customer's device)
-  app.post('/api/send-whatsapp', async (req, res) => {
+  app.post('/api/send-whatsapp', requireCompanyManager, async (req, res) => {
     try {
       const {
         phone,
@@ -2020,7 +2071,7 @@ Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos voc
   });
 
   // Trigger expiring notifications endpoint
-  app.post('/api/notifications/expiring', async (req, res) => {
+  app.post('/api/notifications/expiring', requireCompanyManager, async (req, res) => {
     try {
       const { reviewId, type } = req.body;
       const { sent5DaysCount, sent1DayCount } = await checkAndSendExpiringNotifications(
@@ -2045,7 +2096,7 @@ Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos voc
   });
 
   // Test WhatsApp Gateway endpoint - Sends official voucher preview
-  app.post('/api/test-whatsapp', async (req, res) => {
+  app.post('/api/test-whatsapp', requireCompanyManager, async (req, res) => {
     try {
       const { phone, apiUrl, apiToken, message } = req.body;
       if (!phone) {
@@ -2179,7 +2230,7 @@ Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos voc
   });
 
   // Recent Dispatches log for manager dashboard
-  app.get('/api/whatsapp-dispatches', (_req, res) => {
+  app.get('/api/whatsapp-dispatches', requireCompanyManager, (_req, res) => {
     res.json({
       configuredGateway: Boolean(process.env.WHATSAPP_API_URL),
       dispatches: recentDispatches,
