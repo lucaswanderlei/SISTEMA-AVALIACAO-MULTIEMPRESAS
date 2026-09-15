@@ -61,6 +61,7 @@ import { CustomerEvaluation } from './components/CustomerEvaluation';
 import { TableQrDisplay } from './components/TableQrDisplay';
 import { ManagerDashboard } from './components/ManagerDashboard';
 import { SuperAdmin } from './components/SuperAdmin';
+import { LegalPage } from './components/LegalPage';
 
 function playChimeSound() {
   try {
@@ -82,8 +83,11 @@ function playChimeSound() {
 }
 
 export default function App() {
-  if (typeof window !== 'undefined' && window.location.pathname.replace(/\/$/, '') === '/super-admin') {
-    return <SuperAdmin />;
+  if (typeof window !== 'undefined') {
+    const cleanPath = window.location.pathname.replace(/\/$/, '');
+    if (cleanPath === '/super-admin') return <SuperAdmin />;
+    if (cleanPath === '/privacidade') return <LegalPage kind="privacy" />;
+    if (cleanPath === '/termos') return <LegalPage kind="terms" />;
   }
   // Links de QR antigos podem ter sido gerados enquanto o painel estava em /gerencia.
   // Se houver marcadores de cliente/QR/mesa, o modo cliente SEMPRE tem prioridade.

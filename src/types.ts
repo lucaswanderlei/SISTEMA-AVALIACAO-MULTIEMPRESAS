@@ -21,7 +21,6 @@ export interface Review {
   tableNumber?: number;
   customerName?: string;
   customerPhone?: string;
-  customerPhoneNormalized?: string;
   waiterId?: string;
   waiterName?: string;
   waiterRating?: number; // 1 to 5
@@ -43,6 +42,12 @@ export interface Review {
   whatsappStatus?: 'sent_silently' | 'delivered' | 'failed' | 'pending'; // Status do envio sem abrir app
   whatsappSentAt?: string;
   rewardSentViaWhatsapp?: boolean; // True quando o brinde foi efetivamente enviado apos cliente responder SIM
+  privacyAcceptedAt?: string; // Registro de ciência do Aviso de Privacidade
+  privacyNoticeVersion?: string; // Versão do aviso exibido ao cliente
+  marketingConsent?: boolean; // Consentimento opcional para novidades/ofertas
+  marketingConsentAt?: string;
+  marketingConsentRevokedAt?: string;
+  privacyAnonymizedAt?: string;
   createdAt: string;
 }
 
@@ -87,6 +92,10 @@ export interface RestaurantSettings {
   whatsappTemplateName?: string; // Nome do template pré-aprovado pela Meta (avaliacao_brinde)
   whatsappTemplateLanguage?: string; // Idioma do template (ex: pt_BR, en_US)
   whatsappWebhookVerifyToken?: string; // Token de verificação do webhook da Meta
-  managerPin?: string;         // Campo legado (não é mais usado para autenticação)
-  managerLogin?: string;       // Login da empresa para acessar o painel
+  legalName?: string; // Razão social/nome do responsável pelo tratamento
+  privacyContactEmail?: string; // Contato para solicitações de privacidade
+  privacyContactPhone?: string;
+  privacyNoticeRequired?: boolean; // Exigir ciência do aviso antes de avaliar
+  marketingOptInEnabled?: boolean; // Mostrar consentimento opcional de ofertas
+  managerPin?: string;         // Senha/PIN de 4 dígitos para proteger o Painel do Restaurante (padrão: 1234)
 }
