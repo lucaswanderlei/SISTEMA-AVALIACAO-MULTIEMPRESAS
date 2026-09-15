@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import pg from 'pg';
 import { AsyncLocalStorage } from 'async_hooks';
+import crypto from 'crypto';
 
 const { Pool } = pg;
 
@@ -12,6 +13,60 @@ const pool = new Pool({
     ? { rejectUnauthorized: false }
     : false,
 });
+
+function hashPassword(password: string): string {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const derived = crypto.scryptSync(String(password), salt, 64).toString('hex');
+  return `${salt}:${derived}`;
+}
+
+function verifyPassword(password: string, storedHash: string): boolean {
+  try {
+    const [salt, stored] = String(storedHash || '').split(':');
+    if (!salt || !stored) return false;
+    const derived = crypto.scryptSync(String(password), salt, 64);
+    const expected = Buffer.from(stored, 'hex');
+    return expected.length === derived.length && crypto.timingSafeEqual(expected, derived);
+  } catch {
+    return false;
+  }
+}
+
+function safeEqualText(a: string, b: string): boolean {
+  const ab = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  return ab.length === bb.length && crypto.timingSafeEqual(ab, bb);
+}
+
+function superAdminCredentialsMatch(login: unknown, password: unknown): boolean {
+  const configuredLogin = String(process.env.SUPER_ADMIN_LOGIN || 'superadmin').trim();
+  const configuredPassword = String(process.env.SUPER_ADMIN_PASSWORD || process.env.SUPER_ADMIN_KEY || '').trim();
+  if (!configuredPassword) return false;
+  return safeEqualText(String(login || '').trim(), configuredLogin) && safeEqualText(String(password || ''), configuredPassword);
+}
+
+type AuthSession = { role: 'superadmin' | 'manager'; companyId?: string; expiresAt: number };
+const authSessions = new Map<string, AuthSession>();
+const AUTH_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+
+function createAuthSession(session: Omit<AuthSession, 'expiresAt'>): string {
+  const token = crypto.randomBytes(32).toString('hex');
+  authSessions.set(token, { ...session, expiresAt: Date.now() + AUTH_SESSION_TTL_MS });
+  return token;
+}
+
+function getAuthSession(req: express.Request): AuthSession | null {
+  const header = String(req.header('Authorization') || '');
+  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+  if (!token) return null;
+  const session = authSessions.get(token);
+  if (!session) return null;
+  if (session.expiresAt <= Date.now()) {
+    authSessions.delete(token);
+    return null;
+  }
+  return session;
+}
 async function initPostgres() {
   try {
     await pool.query(`
@@ -29,11 +84,31 @@ async function initPostgres() {
         slug TEXT UNIQUE NOT NULL,
         ativo BOOLEAN NOT NULL DEFAULT TRUE,
         dados JSONB NOT NULL,
+        login TEXT,
+        senha_hash TEXT,
         criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    console.log('[PostgreSQL] Banco conectado; tabelas mono e multiempresa prontas.');
+    await pool.query(`ALTER TABLE avaliacao_empresas ADD COLUMN IF NOT EXISTS login TEXT;`);
+    await pool.query(`ALTER TABLE avaliacao_empresas ADD COLUMN IF NOT EXISTS senha_hash TEXT;`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS avaliacao_empresas_login_lower_idx ON avaliacao_empresas (LOWER(login)) WHERE login IS NOT NULL;`);
+
+    // Migração automática: empresas antigas passam a ter login = slug/ID e
+    // senha = antigo managerPin (ou 1234 quando nunca foi personalizado).
+    const legacyCompanies = await pool.query('SELECT empresa_id, dados, login, senha_hash FROM avaliacao_empresas');
+    for (const row of legacyCompanies.rows) {
+      const legacyPin = String(row.dados?.settings?.managerPin || '1234');
+      const nextLogin = String(row.login || row.empresa_id).trim().toLowerCase();
+      const nextHash = row.senha_hash || hashPassword(legacyPin);
+      const nextData = row.dados || {};
+      nextData.settings = { ...(nextData.settings || {}), managerLogin: nextLogin };
+      await pool.query(
+        'UPDATE avaliacao_empresas SET login=$2, senha_hash=$3, dados=$4::jsonb WHERE empresa_id=$1',
+        [row.empresa_id, nextLogin, nextHash, JSON.stringify(nextData)]
+      );
+    }
+    console.log('[PostgreSQL] Banco conectado; empresas com login/senha e tabelas prontas.');
   } catch (error) {
     console.error('[PostgreSQL] Erro ao inicializar banco:', error);
   }
@@ -107,6 +182,7 @@ const DEFAULT_SETTINGS = {
   autoSendWhatsApp: true,
   autoSendMode: 'silent_api',
   managerPin: '1234',
+  managerLogin: 'demo',
   whatsappApiUrl: '',
   whatsappApiToken: '',
   whatsappCustomMessage: '',
@@ -344,6 +420,7 @@ function freshDb(): RestaurantDb {
       logoUrl: '',
       totalTables: 20,
       managerPin: '1234',
+      managerLogin: 'admin',
       autoSendWhatsApp: false,
       whatsappApiUrl: '',
       whatsappApiToken: '',
@@ -491,7 +568,8 @@ if (totalEmpresas === 0) {
     // Páginas e arquivos estáticos não precisam carregar um tenant. Isso evita
     // que /assets/* ou a própria página inicial tentem usar o antigo "demo".
     if (!req.path.startsWith('/api/')) {
-      const isSuperAdminPage = req.path.replace(/\/$/, '') === '/superadmin';
+      const superPath = req.path.replace(/\/$/, '');
+      const isSuperAdminPage = superPath === '/superadmin' || superPath === '/super-admin';
 
       // Ao abrir a URL principal (ou /gerencia) sem empresa, acrescenta
       // automaticamente ?empresa=<Sr. Coxita>, preservando os demais parâmetros.
@@ -544,26 +622,55 @@ if (totalEmpresas === 0) {
 
   app.use(express.json({ limit: '10mb' }));
 
-  // Administração geral multiempresa. Proteja com SUPER_ADMIN_KEY no Render.
+  // Administração geral multiempresa com login + senha mestre.
   function requireSuperAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
-    const configured = String(process.env.SUPER_ADMIN_KEY || '').trim();
-    const supplied = String(req.header('X-Super-Admin-Key') || '').trim();
-    if (!configured || supplied !== configured) return res.status(401).json({ error: 'Acesso de administrador geral negado.' });
+    const session = getAuthSession(req);
+    if (!session || session.role !== 'superadmin') {
+      return res.status(401).json({ error: 'Acesso de administrador geral negado.' });
+    }
     next();
   }
+
+  function requireCompanyManager(req: express.Request, res: express.Response, next: express.NextFunction) {
+    const session = getAuthSession(req);
+    const companyId = currentCompanyId();
+    if (!session) return res.status(401).json({ error: 'Faça login novamente.' });
+    if (session.role === 'superadmin' || (session.role === 'manager' && session.companyId === companyId)) return next();
+    return res.status(403).json({ error: 'Sessão sem permissão para esta empresa.' });
+  }
+
+  app.post('/api/admin/login', (req, res) => {
+    const { login, password } = req.body || {};
+    if (!superAdminCredentialsMatch(login, password)) {
+      return res.status(401).json({ error: 'Login ou senha mestre inválidos.' });
+    }
+    const token = createAuthSession({ role: 'superadmin' });
+    return res.json({ success: true, token, role: 'superadmin', expiresInHours: 8 });
+  });
+
   app.get('/api/admin/companies', requireSuperAdmin, async (_req, res) => {
-    const result = await pool.query('SELECT empresa_id, nome, slug, ativo, criado_em, atualizado_em FROM avaliacao_empresas ORDER BY criado_em DESC');
+    const result = await pool.query('SELECT empresa_id, nome, slug, login, ativo, criado_em, atualizado_em FROM avaliacao_empresas ORDER BY criado_em DESC');
     res.json({ companies: result.rows });
   });
   app.post('/api/admin/companies', requireSuperAdmin, async (req, res) => {
     const empresaId = normalizeCompanyId(req.body?.slug || req.body?.empresaId || req.body?.name);
     const nome = String(req.body?.name || '').trim();
+    const login = String(req.body?.login || empresaId).trim().toLowerCase();
+    const password = String(req.body?.password || '').trim();
     if (!nome || empresaId === 'demo') return res.status(400).json({ error: 'Informe nome e slug válidos.' });
-    const db = freshDb(); db.settings.name = nome;
-    await pool.query(`INSERT INTO avaliacao_empresas (empresa_id,nome,slug,ativo,dados) VALUES ($1,$2,$1,TRUE,$3::jsonb)
-      ON CONFLICT (empresa_id) DO NOTHING`, [empresaId, nome, JSON.stringify(db)]);
+    if (login.length < 3) return res.status(400).json({ error: 'O login da empresa deve ter pelo menos 3 caracteres.' });
+    if (password.length < 4) return res.status(400).json({ error: 'A senha da empresa deve ter pelo menos 4 caracteres.' });
+    const duplicateId = await pool.query('SELECT empresa_id FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1', [empresaId]);
+    if (duplicateId.rows[0]) return res.status(409).json({ error: 'Já existe uma empresa com este identificador.' });
+    const duplicateLogin = await pool.query('SELECT empresa_id FROM avaliacao_empresas WHERE LOWER(login)=LOWER($1) LIMIT 1', [login]);
+    if (duplicateLogin.rows[0]) return res.status(409).json({ error: 'Este login já está sendo usado por outra empresa.' });
+    const db = freshDb();
+    db.settings.name = nome;
+    (db.settings as any).managerLogin = login;
+    await pool.query(`INSERT INTO avaliacao_empresas (empresa_id,nome,slug,ativo,dados,login,senha_hash) VALUES ($1,$2,$1,TRUE,$3::jsonb,$4,$5)`,
+      [empresaId, nome, JSON.stringify(db), login, hashPassword(password)]);
     tenantDbs.set(empresaId, db);
-    res.status(201).json({ success:true, company:{ empresaId, nome, slug:empresaId }, evaluationUrl:`/?empresa=${empresaId}&cliente=1` });
+    res.status(201).json({ success:true, company:{ empresaId, nome, slug:empresaId, login }, evaluationUrl:`/?empresa=${empresaId}&cliente=1` });
   });
   app.patch('/api/admin/companies/:id/status', requireSuperAdmin, async (req, res) => {
     const id=normalizeCompanyId(req.params.id); const ativo=Boolean(req.body?.ativo);
@@ -575,26 +682,41 @@ if (totalEmpresas === 0) {
   app.patch('/api/admin/companies/:id', requireSuperAdmin, async (req, res) => {
     const id = normalizeCompanyId(req.params.id);
     const nome = String(req.body?.nome || req.body?.name || '').trim();
+    const login = String(req.body?.login || '').trim().toLowerCase();
+    const password = String(req.body?.password || '').trim();
     if (!nome) return res.status(400).json({ error: 'Informe um nome válido.' });
+    if (login && login.length < 3) return res.status(400).json({ error: 'O login deve ter pelo menos 3 caracteres.' });
+    if (password && password.length < 4) return res.status(400).json({ error: 'A nova senha deve ter pelo menos 4 caracteres.' });
 
-    const result = await pool.query('SELECT dados FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1', [id]);
+    const result = await pool.query('SELECT dados, login FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1', [id]);
     if (!result.rows[0]) return res.status(404).json({ error: 'Empresa não encontrada.' });
 
-    const dados = result.rows[0].dados || freshDb();
-    dados.settings = { ...DEFAULT_SETTINGS, ...(dados.settings || {}), name: nome };
+    const nextLogin = login || String(result.rows[0].login || id).toLowerCase();
+    const duplicateLogin = await pool.query('SELECT empresa_id FROM avaliacao_empresas WHERE LOWER(login)=LOWER($1) AND empresa_id<>$2 LIMIT 1', [nextLogin, id]);
+    if (duplicateLogin.rows[0]) return res.status(409).json({ error: 'Este login já está sendo usado por outra empresa.' });
 
-    await pool.query(
-      'UPDATE avaliacao_empresas SET nome=$2, dados=$3::jsonb, atualizado_em=NOW() WHERE empresa_id=$1',
-      [id, nome, JSON.stringify(dados)]
-    );
+    const dados = result.rows[0].dados || freshDb();
+    dados.settings = { ...DEFAULT_SETTINGS, ...(dados.settings || {}), name: nome, managerLogin: nextLogin };
+
+    if (password) {
+      await pool.query(
+        'UPDATE avaliacao_empresas SET nome=$2, login=$3, senha_hash=$4, dados=$5::jsonb, atualizado_em=NOW() WHERE empresa_id=$1',
+        [id, nome, nextLogin, hashPassword(password), JSON.stringify(dados)]
+      );
+    } else {
+      await pool.query(
+        'UPDATE avaliacao_empresas SET nome=$2, login=$3, dados=$4::jsonb, atualizado_em=NOW() WHERE empresa_id=$1',
+        [id, nome, nextLogin, JSON.stringify(dados)]
+      );
+    }
 
     const cached = tenantDbs.get(id);
     if (cached) {
-      cached.settings = { ...cached.settings, name: nome };
+      cached.settings = { ...cached.settings, name: nome, managerLogin: nextLogin } as any;
       tenantDbs.set(id, cached);
     }
 
-    res.json({ success: true, empresaId: id, nome });
+    res.json({ success: true, empresaId: id, nome, login: nextLogin, passwordChanged: Boolean(password) });
   });
 
   app.delete('/api/admin/companies/:id', requireSuperAdmin, async (req, res) => {
@@ -623,6 +745,60 @@ if (totalEmpresas === 0) {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
+  // Login do painel de uma empresa. O login/senha mestre do SuperAdmin também
+  // funciona aqui e permite entrar em qualquer tenant sem conhecer a senha local.
+  app.post('/api/auth/manager', async (req, res) => {
+    try {
+      const { login, password } = req.body || {};
+      const companyId = currentCompanyId();
+
+      if (superAdminCredentialsMatch(login, password)) {
+        const token = createAuthSession({ role: 'superadmin' });
+        return res.json({ success: true, token, role: 'superadmin', companyId });
+      }
+
+      const result = await pool.query(
+        'SELECT login, senha_hash FROM avaliacao_empresas WHERE empresa_id=$1 AND ativo=TRUE LIMIT 1',
+        [companyId]
+      );
+      const company = result.rows[0];
+      if (!company || !safeEqualText(String(login || '').trim().toLowerCase(), String(company.login || '').trim().toLowerCase()) || !verifyPassword(String(password || ''), company.senha_hash)) {
+        return res.status(401).json({ error: 'Login ou senha inválidos.' });
+      }
+      const token = createAuthSession({ role: 'manager', companyId });
+      return res.json({ success: true, token, role: 'manager', companyId, login: company.login });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Erro ao autenticar.' });
+    }
+  });
+
+  app.post('/api/settings/access', requireCompanyManager, async (req, res) => {
+    try {
+      const companyId = currentCompanyId();
+      const login = String(req.body?.login || '').trim().toLowerCase();
+      const password = String(req.body?.password || '').trim();
+      if (login.length < 3) return res.status(400).json({ error: 'O login deve ter pelo menos 3 caracteres.' });
+      if (password.length < 4) return res.status(400).json({ error: 'A senha deve ter pelo menos 4 caracteres.' });
+      const duplicate = await pool.query('SELECT empresa_id FROM avaliacao_empresas WHERE LOWER(login)=LOWER($1) AND empresa_id<>$2 LIMIT 1', [login, companyId]);
+      if (duplicate.rows[0]) return res.status(409).json({ error: 'Este login já está em uso.' });
+
+      const current = tenantDbs.get(companyId) || await loadCompanyDb(companyId);
+      current.settings = { ...current.settings, managerLogin: login } as any;
+      tenantDbs.set(companyId, current);
+      await pool.query(
+        `UPDATE avaliacao_empresas
+         SET login=$2, senha_hash=$3,
+             dados=jsonb_set(COALESCE(dados,'{}'::jsonb), '{settings}', COALESCE(dados->'settings','{}'::jsonb) || $4::jsonb, true),
+             atualizado_em=NOW()
+         WHERE empresa_id=$1`,
+        [companyId, login, hashPassword(password), JSON.stringify({ managerLogin: login })]
+      );
+      return res.json({ success: true, login });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Erro ao atualizar login e senha.' });
+    }
+  });
+
   // Full Central System Synchronization
   app.get('/api/sync', async (_req, res) => {
     try {
@@ -646,8 +822,10 @@ if (totalEmpresas === 0) {
 
       tenantDbs.set(companyId, db);
 
+      const publicSettings: any = { ...db.settings };
+      delete publicSettings.managerPin;
       return res.json({
-        settings: db.settings,
+        settings: publicSettings,
         rewards: db.rewards,
         waiters: db.waiters,
         reviews: db.reviews,
@@ -678,6 +856,12 @@ if (totalEmpresas === 0) {
       const review = req.body;
       if (!review || !review.id) {
         return res.status(400).json({ error: 'Dados da avaliação inválidos.' });
+      }
+      if (review.customerPhone) {
+        let digits = String(review.customerPhone).replace(/\D/g, '').replace(/^0+/, '');
+        if (digits.startsWith('55') && digits.length >= 12) digits = digits.slice(2).replace(/^0+/, '');
+        if (digits.length === 10 && /^[6-9]/.test(digits.slice(2))) digits = `${digits.slice(0,2)}9${digits.slice(2)}`;
+        review.customerPhoneNormalized = digits;
       }
 
       // Check if review already exists
