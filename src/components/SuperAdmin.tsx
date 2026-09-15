@@ -1,21 +1,27 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Activity,
+  AlertTriangle,
+  BarChart3,
   Building2,
   CalendarDays,
   Check,
   Clock3,
   ExternalLink,
   Eye,
+  DollarSign,
   EyeOff,
   KeyRound,
   LogOut,
   Pencil,
   Plus,
   RefreshCw,
+  Save,
   ShieldCheck,
   ToggleLeft,
   ToggleRight,
   Trash2,
+  Users,
   X,
 } from 'lucide-react';
 
@@ -38,6 +44,40 @@ type Company = {
   criado_em?: string;
   atualizado_em?: string;
 };
+
+type PlanPrices = Record<SubscriptionPlan, number>;
+type DashboardData = {
+  generatedAt: string;
+  totals: {
+    companies: number;
+    active: number;
+    trial: number;
+    suspended: number;
+    expired: number;
+    expiring7Days: number;
+    totalReviews: number;
+    reviews30d: number;
+    uniqueCustomers: number;
+    mrr: number;
+  };
+  plans: {
+    counts: PlanPrices;
+    prices: PlanPrices;
+    mrrByPlan: PlanPrices;
+  };
+  dailyReviews: Array<{ date: string; count: number }>;
+  topCompanies: Array<{
+    empresaId: string;
+    nome: string;
+    plan: SubscriptionPlan;
+    status: EffectiveStatus;
+    totalReviews: number;
+    reviews30d: number;
+  }>;
+};
+
+const EMPTY_PLAN_PRICES: PlanPrices = { basic: 0, pro: 0, premium: 0 };
+const formatCurrency = (value: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(value || 0));
 
 const addDaysToToday = (days: number) => {
   const date = new Date();
@@ -89,6 +129,9 @@ export function SuperAdmin() {
   const [masterPassword, setMasterPassword] = useState('');
   const [showMasterPassword, setShowMasterPassword] = useState(false);
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [planPrices, setPlanPrices] = useState<PlanPrices>(EMPTY_PLAN_PRICES);
+  const [savingPrices, setSavingPrices] = useState(false);
 
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
@@ -126,19 +169,44 @@ export function SuperAdmin() {
     setBusy(true);
     setError('');
     try {
-      const res = await request('/api/admin/companies', { cache: 'no-store' });
-      if (res.status === 401) {
+      const [companiesRes, dashboardRes] = await Promise.all([
+        request('/api/admin/companies', { cache: 'no-store' }),
+        request('/api/admin/dashboard', { cache: 'no-store' }),
+      ]);
+      if (companiesRes.status === 401 || dashboardRes.status === 401) {
         sessionStorage.removeItem('super_admin_token');
         setToken('');
         throw new Error('Sessão mestre expirada. Entre novamente.');
       }
-      if (!res.ok) throw new Error('Não foi possível carregar as empresas.');
-      const data = await res.json();
-      setCompanies(data.companies || []);
+      if (!companiesRes.ok) throw new Error('Não foi possível carregar as empresas.');
+      if (!dashboardRes.ok) throw new Error('Não foi possível carregar os indicadores comerciais.');
+      const [companiesData, dashboardData] = await Promise.all([companiesRes.json(), dashboardRes.json()]);
+      setCompanies(companiesData.companies || []);
+      setDashboard(dashboardData);
+      setPlanPrices(dashboardData?.plans?.prices || EMPTY_PLAN_PRICES);
     } catch (e: any) {
       setError(e.message || 'Erro ao carregar.');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const savePlanPrices = async () => {
+    if (savingPrices) return;
+    setSavingPrices(true);
+    setError('');
+    try {
+      const res = await request('/api/admin/dashboard/plan-prices', {
+        method: 'PUT',
+        body: JSON.stringify(planPrices),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Não foi possível salvar os valores dos planos.');
+      await load();
+    } catch (e: any) {
+      setError(e.message || 'Erro ao salvar valores dos planos.');
+    } finally {
+      setSavingPrices(false);
     }
   };
 
@@ -381,6 +449,7 @@ export function SuperAdmin() {
               sessionStorage.removeItem('super_admin_token');
               setToken('');
               setCompanies([]);
+              setDashboard(null);
             }}
             className="text-sm font-bold flex items-center gap-2 px-3 py-2 rounded-xl bg-stone-100"
           >
@@ -392,22 +461,119 @@ export function SuperAdmin() {
       <main className="max-w-7xl mx-auto p-4 sm:p-6 space-y-6">
         {error && <div className="bg-rose-50 text-rose-700 border border-rose-200 rounded-xl p-3 text-sm font-semibold">{error}</div>}
 
-        <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <section className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
           <div className="bg-white rounded-2xl border border-stone-200 p-4">
-            <div className="text-xs font-bold text-stone-500">Empresas</div>
-            <div className="text-2xl font-black text-stone-900 mt-1">{companies.length}</div>
+            <div className="text-xs font-bold text-stone-500 flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5" />Empresas</div>
+            <div className="text-2xl font-black text-stone-900 mt-1">{dashboard?.totals.companies ?? companies.length}</div>
           </div>
           <div className="bg-white rounded-2xl border border-stone-200 p-4">
-            <div className="text-xs font-bold text-emerald-600">Ativas</div>
-            <div className="text-2xl font-black text-stone-900 mt-1">{summary.active}</div>
+            <div className="text-xs font-bold text-emerald-600 flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" />Ativas</div>
+            <div className="text-2xl font-black text-stone-900 mt-1">{dashboard?.totals.active ?? summary.active}</div>
           </div>
           <div className="bg-white rounded-2xl border border-stone-200 p-4">
-            <div className="text-xs font-bold text-amber-600">Em teste</div>
-            <div className="text-2xl font-black text-stone-900 mt-1">{summary.trial}</div>
+            <div className="text-xs font-bold text-sky-600 flex items-center gap-1.5"><Users className="w-3.5 h-3.5" />Clientes únicos</div>
+            <div className="text-2xl font-black text-stone-900 mt-1">{dashboard?.totals.uniqueCustomers ?? 0}</div>
           </div>
           <div className="bg-white rounded-2xl border border-stone-200 p-4">
-            <div className="text-xs font-bold text-rose-600">Suspensas / vencidas</div>
-            <div className="text-2xl font-black text-stone-900 mt-1">{summary.blocked}</div>
+            <div className="text-xs font-bold text-violet-600 flex items-center gap-1.5"><Activity className="w-3.5 h-3.5" />Avaliações</div>
+            <div className="text-2xl font-black text-stone-900 mt-1">{dashboard?.totals.totalReviews ?? summary.reviews}</div>
+            <div className="text-[10px] text-stone-400 mt-0.5">{dashboard?.totals.reviews30d ?? 0} nos últimos 30 dias</div>
+          </div>
+          <div className="bg-white rounded-2xl border border-stone-200 p-4">
+            <div className="text-xs font-bold text-amber-600 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" />Vencem em 7 dias</div>
+            <div className="text-2xl font-black text-stone-900 mt-1">{dashboard?.totals.expiring7Days ?? 0}</div>
+          </div>
+          <div className="bg-stone-900 rounded-2xl border border-stone-900 p-4 text-white">
+            <div className="text-xs font-bold text-stone-300 flex items-center gap-1.5"><DollarSign className="w-3.5 h-3.5" />MRR estimado</div>
+            <div className="text-2xl font-black mt-1">{formatCurrency(dashboard?.totals.mrr ?? 0)}</div>
+            <div className="text-[10px] text-stone-400 mt-0.5">somente assinaturas ativas</div>
+          </div>
+        </section>
+
+        <section className="grid xl:grid-cols-3 gap-4">
+          <div className="bg-white rounded-2xl border border-stone-200 p-5 xl:col-span-2">
+            <div className="flex items-center justify-between gap-3 mb-5">
+              <div>
+                <h2 className="font-black text-stone-900 flex items-center gap-2"><BarChart3 className="w-5 h-5" />Atividade da plataforma</h2>
+                <p className="text-xs text-stone-500 mt-1">Avaliações recebidas nos últimos 7 dias</p>
+              </div>
+              <div className="text-right">
+                <div className="text-xs text-stone-400">Últimos 30 dias</div>
+                <div className="font-black text-stone-900">{dashboard?.totals.reviews30d ?? 0}</div>
+              </div>
+            </div>
+            <div className="h-44 flex items-end gap-2">
+              {(dashboard?.dailyReviews || []).map((item) => {
+                const maxValue = Math.max(1, ...(dashboard?.dailyReviews || []).map((d) => d.count));
+                const height = Math.max(item.count > 0 ? 10 : 3, Math.round((item.count / maxValue) * 100));
+                const date = new Date(`${item.date}T12:00:00`);
+                return (
+                  <div key={item.date} className="flex-1 h-full flex flex-col justify-end items-center min-w-0">
+                    <div className="text-[10px] font-bold text-stone-600 mb-1">{item.count}</div>
+                    <div className="w-full max-w-12 bg-rose-500 rounded-t-lg transition-all" style={{ height: `${height}%` }} />
+                    <div className="text-[10px] text-stone-400 mt-2">{date.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '')}</div>
+                  </div>
+                );
+              })}
+              {!dashboard?.dailyReviews?.length && <div className="w-full text-center text-sm text-stone-400 self-center">Carregando atividade...</div>}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-stone-200 p-5">
+            <h2 className="font-black text-stone-900 flex items-center gap-2"><DollarSign className="w-5 h-5" />Valores dos planos</h2>
+            <p className="text-xs text-stone-500 mt-1 mb-4">Defina o valor mensal para calcular o MRR estimado.</p>
+            <div className="space-y-3">
+              {(['basic', 'pro', 'premium'] as SubscriptionPlan[]).map((plan) => (
+                <label key={plan} className="block">
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="font-bold text-stone-700">{planLabel(plan)}</span>
+                    <span className="text-stone-400">{dashboard?.plans?.counts?.[plan] ?? 0} empresa(s)</span>
+                  </div>
+                  <div className="flex items-center rounded-xl border border-stone-300 overflow-hidden focus-within:ring-2 focus-within:ring-stone-900">
+                    <span className="px-3 text-sm font-bold text-stone-500">R$</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={planPrices[plan]}
+                      onChange={(e) => setPlanPrices((current) => ({ ...current, [plan]: Math.max(0, Number(e.target.value) || 0) }))}
+                      className="w-full px-2 py-2.5 outline-none"
+                    />
+                  </div>
+                </label>
+              ))}
+              <button onClick={() => void savePlanPrices()} disabled={savingPrices} className="w-full mt-2 bg-stone-900 text-white rounded-xl py-2.5 font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50">
+                <Save className="w-4 h-4" />{savingPrices ? 'Salvando...' : 'Salvar valores'}
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section className="grid lg:grid-cols-2 gap-4">
+          <div className="bg-white rounded-2xl border border-stone-200 p-5">
+            <h2 className="font-black text-stone-900 mb-4">Situação das assinaturas</h2>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-3"><div className="text-xs font-bold text-emerald-700">Ativas</div><div className="text-xl font-black mt-1">{dashboard?.totals.active ?? summary.active}</div></div>
+              <div className="rounded-xl bg-amber-50 border border-amber-100 p-3"><div className="text-xs font-bold text-amber-700">Em teste</div><div className="text-xl font-black mt-1">{dashboard?.totals.trial ?? summary.trial}</div></div>
+              <div className="rounded-xl bg-stone-100 border border-stone-200 p-3"><div className="text-xs font-bold text-stone-700">Suspensas</div><div className="text-xl font-black mt-1">{dashboard?.totals.suspended ?? 0}</div></div>
+              <div className="rounded-xl bg-rose-50 border border-rose-100 p-3"><div className="text-xs font-bold text-rose-700">Vencidas</div><div className="text-xl font-black mt-1">{dashboard?.totals.expired ?? 0}</div></div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-stone-200 p-5">
+            <h2 className="font-black text-stone-900 mb-4">Empresas com mais atividade</h2>
+            <div className="space-y-2">
+              {(dashboard?.topCompanies || []).map((company, index) => (
+                <div key={company.empresaId} className="flex items-center justify-between gap-3 rounded-xl border border-stone-100 px-3 py-2.5">
+                  <div className="min-w-0">
+                    <div className="font-bold text-sm text-stone-900 truncate">{index + 1}. {company.nome}</div>
+                    <div className="text-[10px] text-stone-400">{planLabel(company.plan)} • {company.totalReviews} no total</div>
+                  </div>
+                  <div className="text-right shrink-0"><div className="font-black text-stone-900">{company.reviews30d}</div><div className="text-[10px] text-stone-400">30 dias</div></div>
+                </div>
+              ))}
+              {!dashboard?.topCompanies?.length && <div className="text-sm text-stone-400">Ainda não há avaliações suficientes para ranking.</div>}
+            </div>
           </div>
         </section>
 
