@@ -215,6 +215,24 @@ async function initPostgres() {
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS avaliacao_password_resets_usuario_idx ON avaliacao_password_resets (usuario_id, expira_em DESC);`);
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS avaliacao_auditoria (
+        id BIGSERIAL PRIMARY KEY,
+        empresa_id TEXT,
+        empresa_nome TEXT,
+        ator_tipo TEXT NOT NULL,
+        ator_usuario_id TEXT,
+        ator_nome TEXT NOT NULL,
+        acao TEXT NOT NULL,
+        entidade TEXT NOT NULL,
+        entidade_id TEXT,
+        resumo TEXT NOT NULL,
+        detalhes JSONB NOT NULL DEFAULT '{}'::jsonb,
+        criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS avaliacao_auditoria_empresa_data_idx ON avaliacao_auditoria (empresa_id, criado_em DESC);`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS avaliacao_auditoria_data_idx ON avaliacao_auditoria (criado_em DESC);`);
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS avaliacao_plataforma_config (
         id INTEGER PRIMARY KEY,
         dados JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -589,6 +607,141 @@ function normalizeCompanyId(value: unknown): string {
   return clean || 'demo';
 }
 function currentCompanyId(): string { return tenantContext.getStore()?.companyId || 'demo'; }
+
+type AuditMutationDescriptor = {
+  action: string;
+  entity: string;
+  entityId?: string | null;
+  summary: string;
+  companyId?: string | null;
+  companyName?: string | null;
+  details?: Record<string, any>;
+};
+
+function auditSafeFields(body: any): string[] {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return [];
+  return Object.keys(body).filter((key) => !/(pass|senha|pin|token|secret|key|apiurl|apikey)/i.test(key)).slice(0, 30);
+}
+
+function sanitizeAuditDetails(value: any, depth = 0): any {
+  if (depth > 3) return '[limite]';
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string') return value.slice(0, 300);
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (Array.isArray(value)) return value.slice(0, 20).map((item) => sanitizeAuditDetails(item, depth + 1));
+  if (typeof value === 'object') {
+    const out: Record<string, any> = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (/(pass|senha|pin|token|secret|key|authorization|cookie|apiurl|apikey)/i.test(key)) continue;
+      out[key] = sanitizeAuditDetails(item, depth + 1);
+    }
+    return out;
+  }
+  return String(value).slice(0, 300);
+}
+
+async function writeAuditEntry(session: AuthSession, descriptor: AuditMutationDescriptor): Promise<void> {
+  try {
+    const companyId = descriptor.companyId ? normalizeCompanyId(descriptor.companyId) : null;
+    let companyName = descriptor.companyName ? String(descriptor.companyName).slice(0, 180) : null;
+    if (companyId && !companyName) {
+      const found = await pool.query('SELECT nome FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1', [companyId]);
+      companyName = found.rows[0]?.nome ? String(found.rows[0].nome).slice(0, 180) : null;
+    }
+    const actorName = session.role === 'superadmin' ? 'SuperAdmin' : String(session.userName || 'Usuário da empresa').slice(0, 180);
+    await pool.query(
+      `INSERT INTO avaliacao_auditoria
+        (empresa_id,empresa_nome,ator_tipo,ator_usuario_id,ator_nome,acao,entidade,entidade_id,resumo,detalhes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)`,
+      [
+        companyId,
+        companyName,
+        session.role,
+        session.userId || null,
+        actorName,
+        descriptor.action,
+        descriptor.entity,
+        descriptor.entityId ? String(descriptor.entityId).slice(0, 220) : null,
+        String(descriptor.summary || descriptor.action).slice(0, 500),
+        JSON.stringify(sanitizeAuditDetails(descriptor.details || {})),
+      ]
+    );
+  } catch (err) {
+    console.warn('[Auditoria] Não foi possível registrar a ação:', err);
+  }
+}
+
+function describeAuditableMutation(req: express.Request, tenantId: string): AuditMutationDescriptor | null {
+  const method = req.method.toUpperCase();
+  const pathName = req.path;
+  const currentName = tenantDbs.get(tenantId)?.settings?.name || null;
+  const fields = auditSafeFields(req.body);
+
+  if (method === 'PUT' && pathName === '/api/admin/dashboard/plan-prices') {
+    return { action: 'platform.plan_prices.update', entity: 'platform', summary: 'Valores dos planos comerciais foram alterados.', details: { fields } };
+  }
+  if (method === 'POST' && pathName === '/api/admin/companies') {
+    const id = normalizeCompanyId(req.body?.slug || req.body?.empresaId || req.body?.name || req.body?.nome);
+    return { action: 'company.create', entity: 'company', entityId: id, companyId: id, companyName: req.body?.name || req.body?.nome || null, summary: `Empresa ${req.body?.name || req.body?.nome || id} cadastrada.`, details: { plan: req.body?.plan, subscriptionStatus: req.body?.subscriptionStatus, fields } };
+  }
+  const companyMatch = pathName.match(/^\/api\/admin\/companies\/([^/]+)(?:\/(status|renew))?$/);
+  if (companyMatch) {
+    const id = normalizeCompanyId(decodeURIComponent(companyMatch[1]));
+    const suffix = companyMatch[2] || '';
+    if (method === 'PATCH' && suffix === 'status') return { action: 'company.status.update', entity: 'company', entityId: id, companyId: id, summary: `Status da empresa ${id} alterado.`, details: { subscriptionStatus: req.body?.subscriptionStatus } };
+    if (method === 'POST' && suffix === 'renew') return { action: 'company.subscription.renew', entity: 'company', entityId: id, companyId: id, summary: `Assinatura da empresa ${id} renovada.`, details: { days: req.body?.days || 30 } };
+    if (method === 'PATCH' && !suffix) return { action: 'company.update', entity: 'company', entityId: id, companyId: id, companyName: req.body?.nome || req.body?.name || null, summary: `Cadastro da empresa ${id} atualizado.`, details: { fields, plan: req.body?.plan, subscriptionStatus: req.body?.subscriptionStatus } };
+    if (method === 'DELETE' && !suffix) return { action: 'company.delete', entity: 'company', entityId: id, companyId: id, summary: `Empresa ${id} excluída da plataforma.` };
+  }
+
+  if (method === 'POST' && pathName === '/api/users') {
+    return { action: 'user.create', entity: 'user', companyId: tenantId, companyName: currentName, summary: `Novo usuário de acesso criado${req.body?.name ? `: ${String(req.body.name).slice(0,80)}` : ''}.`, details: { accessLevel: req.body?.accessLevel, fields } };
+  }
+  const userMatch = pathName.match(/^\/api\/users\/([^/]+)$/);
+  if (userMatch && (method === 'PATCH' || method === 'DELETE')) {
+    const userId = decodeURIComponent(userMatch[1]);
+    return { action: method === 'DELETE' ? 'user.delete' : 'user.update', entity: 'user', entityId: userId, companyId: tenantId, companyName: currentName, summary: method === 'DELETE' ? 'Usuário de acesso excluído.' : 'Usuário de acesso atualizado.', details: method === 'PATCH' ? { fields, accessLevel: req.body?.accessLevel, active: req.body?.active } : {} };
+  }
+
+  const companyBase = { companyId: tenantId, companyName: currentName };
+  if (method === 'POST' && pathName === '/api/settings/access') return { ...companyBase, action: 'access.credentials.update', entity: 'security', summary: 'Login/senha principal da empresa foram alterados.', details: { fields } };
+  if (method === 'POST' && pathName === '/api/settings/pin') return { ...companyBase, action: 'access.legacy_pin.update', entity: 'security', summary: 'Senha/PIN legado do painel foi alterado.' };
+  if (method === 'POST' && pathName === '/api/settings/whatsapp') return { ...companyBase, action: 'settings.whatsapp.update', entity: 'settings', summary: 'Configurações de WhatsApp foram alteradas.', details: { fields } };
+  if (method === 'POST' && pathName === '/api/sync/push') return { ...companyBase, action: 'settings.save_all', entity: 'settings', summary: 'Configurações e dados operacionais foram salvos manualmente no banco.', details: { fields } };
+  if (method === 'POST' && pathName === '/api/rewards') return { ...companyBase, action: 'rewards.update', entity: 'rewards', summary: 'Lista de brindes foi atualizada.', details: { itemCount: Array.isArray(req.body) ? req.body.length : undefined } };
+  if (method === 'POST' && pathName === '/api/waiters') return { ...companyBase, action: 'waiters.update', entity: 'waiters', summary: 'Lista de atendentes foi atualizada.', details: { itemCount: Array.isArray(req.body) ? req.body.length : undefined } };
+  if (method === 'POST' && pathName === '/api/database/import') return { ...companyBase, action: 'backup.restore', entity: 'database', summary: 'Um backup foi restaurado na empresa.', details: { format: req.body?.format, version: req.body?.version } };
+  if (method === 'GET' && pathName === '/api/database/export') return { ...companyBase, action: 'backup.download', entity: 'database', summary: 'Backup completo da empresa foi baixado.' };
+  if (method === 'GET' && pathName === '/api/exports/customers.csv') return { ...companyBase, action: 'export.customers', entity: 'export', summary: 'CRM de clientes foi exportado em CSV.' };
+  if (method === 'GET' && pathName === '/api/exports/reviews.csv') return { ...companyBase, action: 'export.reviews', entity: 'export', summary: 'Avaliações foram exportadas em CSV.' };
+
+  if (method === 'GET' && pathName === '/api/admin/backup') return { action: 'platform.backup.download', entity: 'database', summary: 'Backup geral da plataforma foi baixado.' };
+  const adminBackupMatch = pathName.match(/^\/api\/admin\/companies\/([^/]+)\/backup$/);
+  if (method === 'GET' && adminBackupMatch) {
+    const id = normalizeCompanyId(decodeURIComponent(adminBackupMatch[1]));
+    return { action: 'company.backup.download', entity: 'database', entityId: id, companyId: id, summary: `Backup da empresa ${id} foi baixado pelo SuperAdmin.` };
+  }
+
+  const privacyExportMatch = pathName.match(/^\/api\/privacy\/requests\/([^/]+)\/export$/);
+  if (privacyExportMatch && method === 'GET') {
+    return { ...companyBase, action: 'privacy.export', entity: 'privacy_request', entityId: decodeURIComponent(privacyExportMatch[1]), summary: 'Dados de uma solicitação de acesso LGPD foram exportados.' };
+  }
+  const privacyMatch = pathName.match(/^\/api\/privacy\/requests\/([^/]+)(?:\/(revoke-marketing|anonymize))?$/);
+  if (privacyMatch && (method === 'PATCH' || method === 'POST')) {
+    const requestId = decodeURIComponent(privacyMatch[1]);
+    const suffix = privacyMatch[2] || '';
+    if (suffix === 'anonymize') return { ...companyBase, action: 'privacy.anonymize', entity: 'privacy_request', entityId: requestId, summary: 'Dados pessoais de uma solicitação LGPD foram anonimizados.' };
+    if (suffix === 'revoke-marketing') return { ...companyBase, action: 'privacy.marketing_revoke', entity: 'privacy_request', entityId: requestId, summary: 'Consentimento promocional de um cliente foi revogado.' };
+    if (method === 'PATCH') return { ...companyBase, action: 'privacy.request.update', entity: 'privacy_request', entityId: requestId, summary: 'Solicitação LGPD teve o status atualizado.', details: { status: req.body?.status } };
+  }
+
+  if (method === 'POST' && pathName === '/api/reviews/validate') return { ...companyBase, action: 'voucher.validate', entity: 'review', summary: 'Voucher de brinde foi validado.' };
+  if (method === 'DELETE' && pathName === '/api/reviews') return { ...companyBase, action: 'reviews.clear', entity: 'reviews', summary: 'Todas as avaliações da empresa foram excluídas.' };
+  const reviewDelete = pathName.match(/^\/api\/reviews\/([^/]+)$/);
+  if (method === 'DELETE' && reviewDelete) return { ...companyBase, action: 'review.delete', entity: 'review', entityId: decodeURIComponent(reviewDelete[1]), summary: 'Uma avaliação foi excluída.' };
+
+  return null;
+}
 
 type SubscriptionStatus = 'trial' | 'active' | 'suspended';
 type SubscriptionPlan = 'basic' | 'pro' | 'premium';
@@ -988,6 +1141,90 @@ if (totalEmpresas === 0) {
     delete safe.whatsappCustomMessage;
     return safe;
   }
+
+  // Auditoria automática apenas para mutações autenticadas e relevantes.
+  // Senhas, tokens e credenciais nunca são gravados no histórico.
+  app.use((req, res, next) => {
+    const session = getAuthSession(req);
+    if (!session) return next();
+    const tenantId = currentCompanyId();
+    const descriptor = describeAuditableMutation(req, tenantId);
+    if (!descriptor) return next();
+    res.on('finish', () => {
+      if (res.statusCode >= 200 && res.statusCode < 400) {
+        void writeAuditEntry(session, descriptor);
+      }
+    });
+    next();
+  });
+
+  app.get('/api/admin/audit', requireSuperAdmin, async (req, res) => {
+    try {
+      const rawLimit = Number(req.query.limit || 80);
+      const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(250, Math.floor(rawLimit))) : 80;
+      const requestedCompany = String(req.query.companyId || '').trim();
+      const params: any[] = [];
+      let where = '';
+      if (requestedCompany) {
+        params.push(normalizeCompanyId(requestedCompany));
+        where = `WHERE empresa_id=$${params.length}`;
+      }
+      params.push(limit);
+      const result = await pool.query(
+        `SELECT id,empresa_id,empresa_nome,ator_tipo,ator_usuario_id,ator_nome,acao,entidade,entidade_id,resumo,detalhes,criado_em
+         FROM avaliacao_auditoria
+         ${where}
+         ORDER BY criado_em DESC
+         LIMIT $${params.length}`,
+        params
+      );
+      return res.json({ logs: result.rows.map((row: any) => ({
+        id: row.id,
+        companyId: row.empresa_id,
+        companyName: row.empresa_nome,
+        actorRole: row.ator_tipo,
+        actorUserId: row.ator_usuario_id,
+        actorName: row.ator_nome,
+        action: row.acao,
+        entity: row.entidade,
+        entityId: row.entidade_id,
+        summary: row.resumo,
+        details: row.detalhes || {},
+        createdAt: row.criado_em,
+      })) });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Erro ao carregar histórico de auditoria.' });
+    }
+  });
+
+  app.get('/api/audit', requireCompanyOwner, async (req, res) => {
+    try {
+      const companyId = currentCompanyId();
+      const rawLimit = Number(req.query.limit || 50);
+      const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(150, Math.floor(rawLimit))) : 50;
+      const result = await pool.query(
+        `SELECT id,empresa_id,empresa_nome,ator_tipo,ator_usuario_id,ator_nome,acao,entidade,entidade_id,resumo,detalhes,criado_em
+         FROM avaliacao_auditoria
+         WHERE empresa_id=$1
+         ORDER BY criado_em DESC
+         LIMIT $2`,
+        [companyId, limit]
+      );
+      return res.json({ logs: result.rows.map((row: any) => ({
+        id: row.id,
+        actorRole: row.ator_tipo,
+        actorName: row.ator_nome,
+        action: row.acao,
+        entity: row.entidade,
+        entityId: row.entidade_id,
+        summary: row.resumo,
+        details: row.detalhes || {},
+        createdAt: row.criado_em,
+      })) });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Erro ao carregar histórico de atividades.' });
+    }
+  });
 
   app.post('/api/admin/login', (req, res) => {
     const { login, password } = req.body || {};
