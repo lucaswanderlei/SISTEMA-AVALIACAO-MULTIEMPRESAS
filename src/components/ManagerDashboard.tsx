@@ -402,6 +402,70 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
     }
   };
 
+  // Backup e exportação
+  const [dataExportBusy, setDataExportBusy] = useState<string | null>(null);
+  const [backupFeedback, setBackupFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const downloadTenantFile = async (url: string, fallbackName: string) => {
+    setBackupFeedback(null);
+    const res = await tenantFetch(url, { cache: 'no-store' });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || 'Não foi possível gerar o arquivo.');
+    }
+    const blob = await res.blob();
+    const disposition = res.headers.get('content-disposition') || '';
+    const match = disposition.match(/filename="?([^";]+)"?/i);
+    const fileName = match?.[1] || fallbackName;
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+  };
+
+  const handleDataDownload = async (kind: 'customers' | 'reviews' | 'backup') => {
+    setDataExportBusy(kind);
+    try {
+      const date = new Date().toISOString().slice(0, 10);
+      if (kind === 'customers') await downloadTenantFile('/api/exports/customers.csv', `clientes_crm_${date}.csv`);
+      if (kind === 'reviews') await downloadTenantFile('/api/exports/reviews.csv', `avaliacoes_${date}.csv`);
+      if (kind === 'backup') await downloadTenantFile('/api/database/export', `backup_empresa_${date}.json`);
+      setBackupFeedback({ type: 'success', message: kind === 'backup' ? 'Backup completo baixado.' : 'Exportação concluída.' });
+    } catch (err: any) {
+      setBackupFeedback({ type: 'error', message: err?.message || 'Falha ao gerar arquivo.' });
+    } finally {
+      setDataExportBusy(null);
+    }
+  };
+
+  const handleRestoreBackup = async (file?: File) => {
+    if (!file || !isOwner) return;
+    if (!window.confirm('Restaurar este backup substituirá configurações, brindes, garçons e avaliações atuais desta empresa. Deseja continuar?')) return;
+    setDataExportBusy('restore');
+    setBackupFeedback(null);
+    try {
+      const text = await file.text();
+      const payload = JSON.parse(text);
+      const res = await tenantFetch('/api/database/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'Não foi possível restaurar o backup.');
+      setBackupFeedback({ type: 'success', message: 'Backup restaurado. O painel será recarregado.' });
+      setTimeout(() => window.location.reload(), 900);
+    } catch (err: any) {
+      setBackupFeedback({ type: 'error', message: err?.message || 'Arquivo de backup inválido.' });
+    } finally {
+      setDataExportBusy(null);
+    }
+  };
+
   // Login / password management state
   const [accessLogin, setAccessLogin] = useState<string>(settings.managerLogin || '');
   const [accessPassword, setAccessPassword] = useState<string>('');
@@ -3351,6 +3415,45 @@ return (
                   )}
                 </div>
               </div>
+          </div>
+
+          {/* Backup & Exportação */}
+          <div className="p-5 sm:p-6 bg-white rounded-3xl border border-stone-200 shadow-sm space-y-4">
+            <div className="flex items-center gap-2.5">
+              <span className="p-2.5 bg-sky-100 text-sky-700 rounded-2xl"><Database className="w-5 h-5" /></span>
+              <div>
+                <h3 className="font-extrabold text-stone-900 text-base">Backup & Exportação de Dados</h3>
+                <p className="text-xs text-stone-500">Baixe os dados da empresa para guardar fora do sistema. O CRM é exportado com um cliente por telefone.</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button type="button" disabled={!!dataExportBusy} onClick={() => void handleDataDownload('customers')} className="p-4 rounded-2xl border border-stone-200 bg-stone-50 hover:bg-stone-100 text-left disabled:opacity-50">
+                <div className="flex items-center gap-2 font-black text-stone-900 text-sm"><Download className="w-4 h-4 text-emerald-600" />Clientes do CRM (CSV)</div>
+                <p className="text-[11px] text-stone-500 mt-1">Uma linha por telefone, total de avaliações, média e última visita.</p>
+              </button>
+              <button type="button" disabled={!!dataExportBusy} onClick={() => void handleDataDownload('reviews')} className="p-4 rounded-2xl border border-stone-200 bg-stone-50 hover:bg-stone-100 text-left disabled:opacity-50">
+                <div className="flex items-center gap-2 font-black text-stone-900 text-sm"><Download className="w-4 h-4 text-sky-600" />Avaliações (CSV)</div>
+                <p className="text-[11px] text-stone-500 mt-1">Histórico detalhado, notas, comentários, vouchers e datas.</p>
+              </button>
+              {isOwner && (
+                <button type="button" disabled={!!dataExportBusy} onClick={() => void handleDataDownload('backup')} className="p-4 rounded-2xl border border-stone-200 bg-stone-50 hover:bg-stone-100 text-left disabled:opacity-50">
+                  <div className="flex items-center gap-2 font-black text-stone-900 text-sm"><Database className="w-4 h-4 text-violet-600" />Backup completo (JSON)</div>
+                  <p className="text-[11px] text-stone-500 mt-1">Configurações, brindes, atendentes e todas as avaliações da empresa.</p>
+                </button>
+              )}
+              {isOwner && (
+                <label className={`p-4 rounded-2xl border border-stone-200 bg-stone-50 hover:bg-stone-100 text-left cursor-pointer ${dataExportBusy ? 'opacity-50 pointer-events-none' : ''}`}>
+                  <div className="flex items-center gap-2 font-black text-stone-900 text-sm"><Upload className="w-4 h-4 text-amber-600" />Restaurar backup</div>
+                  <p className="text-[11px] text-stone-500 mt-1">Aceita backup atual e o formato antigo do sistema. Substitui os dados atuais.</p>
+                  <input type="file" accept="application/json,.json" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; e.currentTarget.value = ''; void handleRestoreBackup(file); }} />
+                </label>
+              )}
+            </div>
+
+            {dataExportBusy && <div className="text-xs font-bold text-sky-700">Preparando {dataExportBusy === 'restore' ? 'restauração' : 'arquivo'}...</div>}
+            {backupFeedback && <div className={`p-3 rounded-xl text-xs font-bold flex items-center gap-2 ${backupFeedback.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'}`}>{backupFeedback.type === 'success' ? <CheckCircle2 className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}<span>{backupFeedback.message}</span></div>}
+            {isOwner && <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3">O backup completo pode conter dados pessoais de clientes e credenciais de integrações configuradas pela empresa. Guarde o arquivo em local seguro.</p>}
           </div>
 
           {isOwner && (<>

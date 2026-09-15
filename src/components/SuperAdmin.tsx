@@ -10,6 +10,7 @@ import {
   ExternalLink,
   Eye,
   DollarSign,
+  Download,
   EyeOff,
   KeyRound,
   LogOut,
@@ -156,6 +157,52 @@ export function SuperAdmin() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [renewingId, setRenewingId] = useState<string | null>(null);
   const [changingStatusId, setChangingStatusId] = useState<string | null>(null);
+  const [backupCompanyId, setBackupCompanyId] = useState<string | null>(null);
+  const [backupAllBusy, setBackupAllBusy] = useState(false);
+
+  const downloadAdminFile = async (url: string, fallbackName: string) => {
+    const res = await request(url, { cache: 'no-store' });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || 'Não foi possível gerar o backup.');
+    }
+    const blob = await res.blob();
+    const disposition = res.headers.get('content-disposition') || '';
+    const match = disposition.match(/filename="?([^";]+)"?/i);
+    const fileName = match?.[1] || fallbackName;
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+  };
+
+  const backupCompany = async (company: Company) => {
+    setBackupCompanyId(company.empresa_id);
+    setError('');
+    try {
+      await downloadAdminFile(`/api/admin/companies/${encodeURIComponent(company.empresa_id)}/backup`, `backup_${company.empresa_id}.json`);
+    } catch (e: any) {
+      setError(e.message || 'Erro ao baixar backup da empresa.');
+    } finally {
+      setBackupCompanyId(null);
+    }
+  };
+
+  const backupAll = async () => {
+    setBackupAllBusy(true);
+    setError('');
+    try {
+      await downloadAdminFile('/api/admin/backup', `backup_plataforma_${new Date().toISOString().slice(0,10)}.json`);
+    } catch (e: any) {
+      setError(e.message || 'Erro ao baixar backup geral.');
+    } finally {
+      setBackupAllBusy(false);
+    }
+  };
 
   const request = async (url: string, init: RequestInit = {}) => {
     const headers = new Headers(init.headers || {});
@@ -634,7 +681,12 @@ export function SuperAdmin() {
               <h2 className="font-black text-stone-900 flex gap-2 items-center"><Building2 className="w-5 h-5" />Empresas</h2>
               <p className="text-xs text-stone-500 mt-1">{companies.length} empresa(s) • {summary.reviews} avaliação(ões) armazenada(s)</p>
             </div>
-            <button onClick={load} className="p-2 rounded-xl bg-stone-100" title="Atualizar"><RefreshCw className={`w-4 h-4 ${busy ? 'animate-spin' : ''}`} /></button>
+            <div className="flex items-center gap-2">
+              <button onClick={() => void backupAll()} disabled={backupAllBusy} className="px-3 py-2 rounded-xl bg-violet-50 text-violet-700 text-xs font-black flex items-center gap-1.5 disabled:opacity-50" title="Baixar backup de dados de todas as empresas">
+                <Download className="w-4 h-4" />{backupAllBusy ? 'Gerando...' : 'Backup geral'}
+              </button>
+              <button onClick={load} className="p-2 rounded-xl bg-stone-100" title="Atualizar"><RefreshCw className={`w-4 h-4 ${busy ? 'animate-spin' : ''}`} /></button>
+            </div>
           </div>
 
           <div className="divide-y divide-stone-100">
@@ -692,6 +744,14 @@ export function SuperAdmin() {
                         <a href={`/gerencia?empresa=${encodeURIComponent(c.empresa_id)}`} target="_blank" rel="noreferrer" className="text-xs font-bold px-3 py-2 rounded-xl bg-stone-900 text-white flex items-center gap-1.5" title="Abrir e entrar com credencial da empresa ou credencial mestre">
                           <ExternalLink className="w-3.5 h-3.5" />Entrar na empresa
                         </a>
+                        <button
+                          disabled={backupCompanyId === c.empresa_id}
+                          onClick={() => void backupCompany(c)}
+                          className="text-xs font-bold px-3 py-2 rounded-xl bg-violet-50 text-violet-700 flex items-center gap-1.5 disabled:opacity-50"
+                          title="Baixar backup desta empresa"
+                        >
+                          <Download className="w-3.5 h-3.5" />{backupCompanyId === c.empresa_id ? 'Gerando...' : 'Backup'}
+                        </button>
                         <button
                           disabled={renewingId === c.empresa_id}
                           onClick={() => void renewCompany(c)}
