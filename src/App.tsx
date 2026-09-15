@@ -52,6 +52,8 @@ import {
   apiSyncPush,
   apiSaveWhatsAppSettings,
   apiManagerLogin,
+  apiFetchCompanyStatus,
+  CompanyAccessStatus,
 } from './lib/api';
 import { CustomerEvaluation } from './components/CustomerEvaluation';
 import { TableQrDisplay } from './components/TableQrDisplay';
@@ -97,6 +99,8 @@ export default function App() {
   const [reviews, setReviews] = useState<Review[]>(loadReviews);
   const [waiters, setWaiters] = useState<Waiter[]>(loadWaiters);
   const [isServerSynced, setIsServerSynced] = useState<boolean>(true);
+  const [companyAccessStatus, setCompanyAccessStatus] = useState<CompanyAccessStatus | null>(null);
+  const [companyStatusChecked, setCompanyStatusChecked] = useState(false);
 
   // Keep a ref of known review IDs to detect brand new reviews arriving from QR codes
   const knownReviewIdsRef = useRef<Set<string>>(new Set(loadReviews().map((r) => r.id)));
@@ -112,6 +116,7 @@ export default function App() {
         try {
           sessionStorage.removeItem(tenantKey('restaurant_manager_auth'));
           sessionStorage.removeItem(tenantKey('restaurant_manager_token'));
+          sessionStorage.removeItem(tenantKey('restaurant_manager_role'));
         } catch {}
         return false;
       }
@@ -120,6 +125,14 @@ export default function App() {
       } catch {}
     }
     return false;
+  });
+  const [managerRole, setManagerRole] = useState<string>(() => {
+    if (typeof window === 'undefined') return '';
+    try {
+      return sessionStorage.getItem(tenantKey('restaurant_manager_role')) || 'manager';
+    } catch {
+      return 'manager';
+    }
   });
 
   const [currentTable, setCurrentTable] = useState<number>(() => {
@@ -180,7 +193,9 @@ export default function App() {
         try {
           sessionStorage.removeItem(tenantKey('restaurant_manager_auth'));
           sessionStorage.removeItem(tenantKey('restaurant_manager_token'));
+          sessionStorage.removeItem(tenantKey('restaurant_manager_role'));
         } catch {}
+        setManagerRole('');
       }
 
       if (mesaParam) {
@@ -191,6 +206,31 @@ export default function App() {
         }
       }
     }
+  }, []);
+
+  // Subscription/status check. The customer form is not shown until this
+  // lightweight endpoint confirms that the company can currently receive
+  // evaluations. It is refreshed periodically so a suspension takes effect on
+  // already-open pages without requiring the customer to reload manually.
+  useEffect(() => {
+    let mounted = true;
+
+    const checkCompanyAccess = async () => {
+      const status = await apiFetchCompanyStatus();
+      if (!mounted) return;
+      setCompanyAccessStatus(status);
+      setCompanyStatusChecked(true);
+    };
+
+    void checkCompanyAccess();
+    const timer = window.setInterval(() => {
+      void checkCompanyAccess();
+    }, 60_000);
+
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+    };
   }, []);
 
   // 1. Initial Load: PostgreSQL is the ONLY authority.
@@ -335,13 +375,23 @@ export default function App() {
       }
       try {
         sessionStorage.setItem(tenantKey('restaurant_manager_auth'), 'true');
+        sessionStorage.setItem(tenantKey('restaurant_manager_role'), result.role || 'manager');
       } catch {}
+      setManagerRole(result.role || 'manager');
       setIsManagerLoggedIn(true);
       setActiveView(pendingView);
       setShowPinModal(false);
       setPinInput('');
       setPinError('');
       showToast(result.role === 'superadmin' ? 'Acesso mestre autorizado.' : 'Acesso autorizado ao painel do restaurante.');
+
+      // A empresa suspensa/vencida bloqueia APIs para a gerência comum, mas o
+      // SuperAdmin pode entrar. Recarregar aqui faz o boot repetir a sincronização
+      // já com o token mestre anexado às requisições.
+      if (result.role === 'superadmin' && companyAccessStatus?.accessible === false) {
+        window.location.reload();
+        return;
+      }
     } finally {
       setIsAuthenticating(false);
     }
@@ -351,8 +401,10 @@ export default function App() {
     try {
       sessionStorage.removeItem(tenantKey('restaurant_manager_auth'));
       sessionStorage.removeItem(tenantKey('restaurant_manager_token'));
+      sessionStorage.removeItem(tenantKey('restaurant_manager_role'));
     } catch {}
     setIsManagerLoggedIn(false);
+    setManagerRole('');
     setActiveView('customer');
     showToast('Painel do restaurante bloqueado com sucesso.');
   };
@@ -563,6 +615,34 @@ export default function App() {
     }, 4000);
   };
 
+  const companyBlocked = companyAccessStatus?.accessible === false;
+  const managerCanBypassSubscription = isManagerLoggedIn && managerRole === 'superadmin';
+  const blockedTitle = companyAccessStatus?.code === 'SUBSCRIPTION_EXPIRED'
+    ? 'Assinatura vencida'
+    : companyAccessStatus?.code === 'COMPANY_NOT_FOUND'
+      ? 'Empresa indisponível'
+      : 'Avaliações temporariamente suspensas';
+  const blockedMessage = companyAccessStatus?.message || 'Esta página está temporariamente indisponível. Entre em contato com o estabelecimento.';
+  const blockedExpiry = companyAccessStatus?.company?.expiresAt
+    ? String(companyAccessStatus.company.expiresAt).slice(0, 10).split('-').reverse().join('/')
+    : null;
+
+  const subscriptionBlockedPanel = (
+    <div className="max-w-lg mx-auto my-12 p-7 sm:p-9 bg-white rounded-3xl border border-stone-200 shadow-xl text-center space-y-4">
+      <div className="w-16 h-16 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto border border-rose-100">
+        <ShieldAlert className="w-8 h-8" />
+      </div>
+      <div>
+        <h2 className="text-xl font-black text-stone-900">{blockedTitle}</h2>
+        <p className="text-sm text-stone-500 mt-2 leading-relaxed">{blockedMessage}</p>
+        {blockedExpiry && companyAccessStatus?.code === 'SUBSCRIPTION_EXPIRED' && (
+          <p className="text-xs font-bold text-rose-600 mt-2">Vencimento: {blockedExpiry}</p>
+        )}
+      </div>
+      <p className="text-[11px] text-stone-400">Se você é responsável pelo estabelecimento, use o acesso da Gerência ou entre em contato com o suporte da plataforma.</p>
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-stone-100 text-stone-800 flex flex-col font-sans selection:bg-rose-100 selection:text-rose-800">
       {/* Toast Notification */}
@@ -693,7 +773,16 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 md:p-8">
-        {activeView === 'customer' && (
+        {activeView === 'customer' && !companyStatusChecked && (
+          <div className="max-w-md mx-auto my-16 p-6 bg-white rounded-3xl border border-stone-200 shadow-sm text-center">
+            <div className="w-8 h-8 border-4 border-stone-200 border-t-rose-600 rounded-full animate-spin mx-auto" />
+            <p className="text-xs font-bold text-stone-500 mt-3">Carregando avaliação...</p>
+          </div>
+        )}
+
+        {activeView === 'customer' && companyStatusChecked && companyBlocked && !managerCanBypassSubscription && subscriptionBlockedPanel}
+
+        {activeView === 'customer' && companyStatusChecked && (!companyBlocked || managerCanBypassSubscription) && (
           <CustomerEvaluation
             tableNumber={currentTable}
             onTableChange={(newTbl) => setCurrentTable(newTbl)}
@@ -705,7 +794,9 @@ export default function App() {
         )}
 
         {/* Protected Views: Only accessible if authenticated */}
-        {activeView === 'qr_display' && isManagerLoggedIn && (
+        {activeView === 'qr_display' && isManagerLoggedIn && companyBlocked && !managerCanBypassSubscription && subscriptionBlockedPanel}
+
+        {activeView === 'qr_display' && isManagerLoggedIn && (!companyBlocked || managerCanBypassSubscription) && (
           <TableQrDisplay
             currentTable={currentTable}
             totalTables={settings.totalTables}
@@ -718,7 +809,9 @@ export default function App() {
           />
         )}
 
-        {activeView === 'manager' && isManagerLoggedIn && (
+        {activeView === 'manager' && isManagerLoggedIn && companyBlocked && !managerCanBypassSubscription && subscriptionBlockedPanel}
+
+        {activeView === 'manager' && isManagerLoggedIn && (!companyBlocked || managerCanBypassSubscription) && (
           <ManagerDashboard
             reviews={reviews}
             rewards={rewards}
