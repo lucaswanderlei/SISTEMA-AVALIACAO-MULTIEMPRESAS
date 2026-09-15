@@ -43,6 +43,7 @@ import {
   ShieldCheck,
   UserX,
   RefreshCw,
+  History,
 } from 'lucide-react';
 import { RestaurantSettings, RewardOption, Review, Waiter } from '../types';
 import { CustomerDatabaseView } from './CustomerDatabaseView';
@@ -90,6 +91,18 @@ const renderVoucherPreview = (template: string, settings: RestaurantSettings) =>
     .replace(/{{\s*inicio\s*}}/gi, 'amanhã')
     .replace(/{{\s*expira\s*}}/gi, `em ${settings.rewardValidityDays || 15} dias`)
     .replace(/{{\s*validade_dias\s*}}/gi, String(settings.rewardValidityDays || 15));
+
+interface AuditLogItem {
+  id: number | string;
+  actorRole: string;
+  actorName: string;
+  action: string;
+  entity: string;
+  entityId?: string | null;
+  summary: string;
+  details?: Record<string, any>;
+  createdAt: string;
+}
 
 interface PrivacyRequestItem {
   id: string;
@@ -490,6 +503,31 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
       setDataExportBusy(null);
     }
   };
+
+  // Histórico de auditoria da empresa
+  const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState('');
+
+  const loadAuditLogs = async () => {
+    if (!isOwner) return;
+    setAuditLoading(true);
+    setAuditError('');
+    try {
+      const res = await tenantFetch('/api/audit?limit=50', { cache: 'no-store' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'Não foi possível carregar o histórico.');
+      setAuditLogs(body.logs || []);
+    } catch (err: any) {
+      setAuditError(err?.message || 'Falha ao carregar histórico.');
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOwner && activeTab === 'settings') void loadAuditLogs();
+  }, [activeTab, isOwner]);
 
   // Privacidade / LGPD
   const [privacyRequests, setPrivacyRequests] = useState<PrivacyRequestItem[]>([]);
@@ -3614,6 +3652,38 @@ return (
               )}
             </div>
           </div>
+
+          {isOwner && (
+            <div className="p-5 sm:p-6 bg-white rounded-3xl border border-stone-200 shadow-sm space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <span className="p-2.5 bg-violet-100 text-violet-700 rounded-2xl"><History className="w-5 h-5" /></span>
+                  <div>
+                    <h3 className="font-extrabold text-stone-900 text-base">Histórico de Atividades</h3>
+                    <p className="text-xs text-stone-500">Mostra quem alterou configurações, usuários, brindes, avaliações, backups e dados de privacidade.</p>
+                  </div>
+                </div>
+                <button type="button" onClick={() => void loadAuditLogs()} disabled={auditLoading} className="p-2 rounded-xl bg-stone-100 text-stone-600 disabled:opacity-50" title="Atualizar histórico"><RefreshCw className={`w-4 h-4 ${auditLoading ? 'animate-spin' : ''}`} /></button>
+              </div>
+              {auditError && <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold">{auditError}</div>}
+              <div className="rounded-2xl border border-stone-200 overflow-hidden max-h-[360px] overflow-y-auto divide-y divide-stone-100">
+                {auditLoading && auditLogs.length === 0 && <div className="p-4 text-xs text-stone-400 text-center">Carregando histórico...</div>}
+                {!auditLoading && auditLogs.length === 0 && <div className="p-4 text-xs text-stone-400 text-center">Nenhuma ação registrada ainda.</div>}
+                {auditLogs.map((log) => (
+                  <div key={String(log.id)} className="p-3.5 bg-white">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-xs font-black text-stone-900">{log.summary}</div>
+                        <div className="text-[10px] text-stone-500 mt-1">{log.actorName || (log.actorRole === 'superadmin' ? 'SuperAdmin' : 'Usuário')} • <span className="font-mono text-stone-400">{log.action}</span></div>
+                      </div>
+                      <div className="text-[10px] text-stone-400 whitespace-nowrap">{new Date(log.createdAt).toLocaleString('pt-BR')}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[10px] text-stone-500">Por segurança, o histórico não grava senhas, PINs, tokens, API keys ou cabeçalhos de autenticação.</p>
+            </div>
+          )}
 
           {/* Backup & Exportação */}
           <div className="p-5 sm:p-6 bg-white rounded-3xl border border-stone-200 shadow-sm space-y-4">

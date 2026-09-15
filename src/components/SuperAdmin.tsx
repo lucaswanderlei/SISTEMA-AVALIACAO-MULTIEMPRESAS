@@ -7,6 +7,7 @@ import {
   CalendarDays,
   Check,
   Clock3,
+  History,
   ExternalLink,
   Eye,
   DollarSign,
@@ -47,6 +48,20 @@ type Company = {
 };
 
 type PlanPrices = Record<SubscriptionPlan, number>;
+type AuditLog = {
+  id: number | string;
+  companyId?: string | null;
+  companyName?: string | null;
+  actorRole: 'superadmin' | 'manager' | string;
+  actorName: string;
+  action: string;
+  entity: string;
+  entityId?: string | null;
+  summary: string;
+  details?: Record<string, any>;
+  createdAt: string;
+};
+
 type DashboardData = {
   generatedAt: string;
   totals: {
@@ -159,6 +174,9 @@ export function SuperAdmin() {
   const [changingStatusId, setChangingStatusId] = useState<string | null>(null);
   const [backupCompanyId, setBackupCompanyId] = useState<string | null>(null);
   const [backupAllBusy, setBackupAllBusy] = useState(false);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditCompanyFilter, setAuditCompanyFilter] = useState('');
 
   const downloadAdminFile = async (url: string, fallbackName: string) => {
     const res = await request(url, { cache: 'no-store' });
@@ -211,6 +229,23 @@ export function SuperAdmin() {
     return fetch(url, { ...init, headers });
   };
 
+  const loadAudit = async () => {
+    if (!token) return;
+    setAuditLoading(true);
+    try {
+      const qs = new URLSearchParams({ limit: '100' });
+      if (auditCompanyFilter) qs.set('companyId', auditCompanyFilter);
+      const res = await request(`/api/admin/audit?${qs.toString()}`, { cache: 'no-store' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Não foi possível carregar o histórico.');
+      setAuditLogs(data.logs || []);
+    } catch (e: any) {
+      setError(e.message || 'Erro ao carregar auditoria.');
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
   const load = async () => {
     if (!token) return;
     setBusy(true);
@@ -259,7 +294,12 @@ export function SuperAdmin() {
 
   useEffect(() => {
     void load();
+    void loadAudit();
   }, [token]);
+
+  useEffect(() => {
+    if (token) void loadAudit();
+  }, [auditCompanyFilter]);
 
   const summary = useMemo(() => {
     const counts = { active: 0, trial: 0, blocked: 0, reviews: 0 };
@@ -777,6 +817,39 @@ export function SuperAdmin() {
                 </div>
               );
             })}
+          </div>
+        </section>
+
+        <section className="bg-white rounded-2xl border border-stone-200 overflow-hidden">
+          <div className="p-5 border-b border-stone-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 className="font-black text-stone-900 flex gap-2 items-center"><History className="w-5 h-5" />Histórico de Auditoria</h2>
+              <p className="text-xs text-stone-500 mt-1">Registra ações administrativas sem armazenar senhas, tokens ou chaves de integração.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <select value={auditCompanyFilter} onChange={(e) => setAuditCompanyFilter(e.target.value)} className="border border-stone-300 rounded-xl px-3 py-2 bg-white text-xs font-bold max-w-[220px]">
+                <option value="">Todas as empresas</option>
+                {companies.map((company) => <option key={company.empresa_id} value={company.empresa_id}>{company.nome}</option>)}
+              </select>
+              <button onClick={() => void loadAudit()} disabled={auditLoading} className="p-2 rounded-xl bg-stone-100 disabled:opacity-50" title="Atualizar histórico"><RefreshCw className={`w-4 h-4 ${auditLoading ? 'animate-spin' : ''}`} /></button>
+            </div>
+          </div>
+          <div className="divide-y divide-stone-100 max-h-[520px] overflow-y-auto">
+            {auditLoading && auditLogs.length === 0 ? <div className="p-6 text-center text-sm text-stone-400">Carregando histórico...</div> : null}
+            {!auditLoading && auditLogs.length === 0 ? <div className="p-6 text-center text-sm text-stone-400">Ainda não há ações registradas.</div> : null}
+            {auditLogs.map((log) => (
+              <div key={String(log.id)} className="p-4 flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="font-bold text-sm text-stone-900">{log.summary}</div>
+                  <div className="text-[11px] text-stone-500 mt-1 flex flex-wrap gap-x-3 gap-y-1">
+                    <span>Por: <strong>{log.actorName || (log.actorRole === 'superadmin' ? 'SuperAdmin' : 'Usuário')}</strong></span>
+                    <span>Empresa: <strong>{log.companyName || log.companyId || 'Plataforma'}</strong></span>
+                    <span className="font-mono text-[10px] text-stone-400">{log.action}</span>
+                  </div>
+                </div>
+                <div className="text-[11px] font-semibold text-stone-400 whitespace-nowrap">{new Date(log.createdAt).toLocaleString('pt-BR')}</div>
+              </div>
+            ))}
           </div>
         </section>
       </main>
