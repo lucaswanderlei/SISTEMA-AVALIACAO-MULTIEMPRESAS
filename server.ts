@@ -1119,6 +1119,29 @@ if (totalEmpresas === 0) {
     res.json({ success: true, planPrices });
   });
 
+  // Backup externo pelo SuperAdmin, sem expor hashes de senha.
+  app.get('/api/admin/companies/:id/backup', requireSuperAdmin, async (req, res) => {
+    const companyId = normalizeCompanyId(req.params.id);
+    const result = await pool.query('SELECT empresa_id,nome,slug,ativo,plano,status_assinatura,vencimento_em,criado_em,atualizado_em,dados FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1', [companyId]);
+    if (!result.rows[0]) return res.status(404).json({ error: 'Empresa não encontrada.' });
+    const row = result.rows[0];
+    const payload = { format: 'avaliaeganha-company-backup', version: 2, exportedAt: new Date().toISOString(), company: { empresa_id: row.empresa_id, nome: row.nome, slug: row.slug, ativo: row.ativo, plano: row.plano, status_assinatura: row.status_assinatura, vencimento_em: row.vencimento_em, criado_em: row.criado_em, atualizado_em: row.atualizado_em }, data: row.dados };
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Disposition', `attachment; filename="backup_${safeExportFilePart(row.nome || companyId)}_${new Date().toISOString().slice(0,10)}.json"`);
+    return res.send(JSON.stringify(payload, null, 2));
+  });
+
+  app.get('/api/admin/backup', requireSuperAdmin, async (_req, res) => {
+    const companies = await pool.query('SELECT empresa_id,nome,slug,ativo,plano,status_assinatura,vencimento_em,criado_em,atualizado_em,dados FROM avaliacao_empresas ORDER BY criado_em');
+    const users = await pool.query('SELECT id,empresa_id,nome,login,email,perfil,ativo,ultimo_acesso_em,criado_em,atualizado_em FROM avaliacao_usuarios ORDER BY empresa_id,criado_em');
+    const payload = { format: 'avaliaeganha-platform-backup', version: 1, exportedAt: new Date().toISOString(), note: 'Backup de dados sem hashes de senha. Credenciais devem ser redefinidas em uma restauração total.', companies: companies.rows, users: users.rows };
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Disposition', `attachment; filename="backup_plataforma_${new Date().toISOString().slice(0,10)}.json"`);
+    return res.send(JSON.stringify(payload, null, 2));
+  });
+
   app.post('/api/admin/companies', requireSuperAdmin, async (req, res) => {
     const empresaId = normalizeCompanyId(req.body?.slug || req.body?.empresaId || req.body?.name);
     const nome = String(req.body?.name || '').trim();
@@ -2149,30 +2172,110 @@ if (totalEmpresas === 0) {
     }
   });
 
-  // Export full database JSON file
-  app.get('/api/database/export', requireCompanyOwner, (_req, res) => {
-    res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Disposition', 'attachment; filename="banco_restaurante_backup.json"');
-    return res.send(JSON.stringify(activeDb, null, 2));
+  function safeExportFilePart(value: unknown): string {
+    return String(value || 'empresa').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || 'empresa';
+  }
+
+  function csvCell(value: unknown): string {
+    if (value === undefined || value === null) return '""';
+    return `"${String(value).replace(/"/g, '""').replace(/\r?\n/g, ' ')}"`;
+  }
+
+  function reviewAverage(review: any): number {
+    const ratings = review?.ratings || {};
+    const values = [ratings.service, ratings.ambiance, ratings.products, ratings.waitTime].map((v) => Number(v || 0));
+    return values.reduce((a, b) => a + b, 0) / Math.max(1, values.length);
+  }
+
+  // Export detalhado de avaliações. Disponível para qualquer usuário autenticado da empresa.
+  app.get('/api/exports/reviews.csv', requireCompanyManager, (_req, res) => {
+    const rows = Array.isArray(activeDb.reviews) ? activeDb.reviews : [];
+    const headers = ['ID','Nome','Telefone','Mesa','Atendente','Nota Atendimento','Nota Ambiente','Nota Produtos','Nota Espera','Media Geral','Destaques','Critica','Sugestao','Brinde','Codigo Voucher','Resgatado','Data Avaliacao','Data Resgate'];
+    const lines = rows.map((r: any) => [
+      r.id, r.customerName || '', r.customerPhone || '', r.tableNumber || '', r.waiterName || '',
+      r.ratings?.service ?? '', r.ratings?.ambiance ?? '', r.ratings?.products ?? '', r.ratings?.waitTime ?? '', reviewAverage(r).toFixed(2),
+      Array.isArray(r.quickTags) ? r.quickTags.join(' | ') : '', r.criticism || '', r.suggestion || '', r.rewardTitle || '', r.rewardCode || '',
+      r.rewardClaimed ? 'Sim' : 'Nao', r.createdAt || '', r.claimedAt || ''
+    ].map(csvCell).join(';'));
+    const name = safeExportFilePart(activeDb.settings?.name || currentCompanyId());
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Disposition', `attachment; filename="avaliacoes_${name}_${new Date().toISOString().slice(0,10)}.csv"`);
+    return res.send('\uFEFFsep=;\n' + headers.map(csvCell).join(';') + '\n' + lines.join('\n'));
   });
 
-  // Import full database JSON file
-  app.post('/api/database/import', requireCompanyOwner, (req, res) => {
+  // Export do CRM consolidado: uma linha por telefone, com histórico resumido.
+  app.get('/api/exports/customers.csv', requireCompanyManager, (_req, res) => {
+    const reviews = Array.isArray(activeDb.reviews) ? [...activeDb.reviews] : [];
+    reviews.sort((a: any, b: any) => new Date(String(a.createdAt || 0)).getTime() - new Date(String(b.createdAt || 0)).getTime());
+    const grouped = new Map<string, any>();
+    for (const r of reviews as any[]) {
+      const phone = normalizeDashboardPhone(r.customerPhoneNormalized || r.customerPhone);
+      const key = phone || `sem-telefone:${r.id}`;
+      const current = grouped.get(key) || { phone: r.customerPhone || '', normalizedPhone: phone, name: r.customerName || '', count: 0, firstAt: r.createdAt || '', lastAt: r.createdAt || '', avgSum: 0, lastReward: '', lastRewardCode: '', lastClaimed: false };
+      current.count += 1;
+      current.avgSum += reviewAverage(r);
+      if (r.customerName) current.name = r.customerName;
+      if (r.customerPhone) current.phone = r.customerPhone;
+      current.lastAt = r.createdAt || current.lastAt;
+      current.lastReward = r.rewardTitle || current.lastReward;
+      current.lastRewardCode = r.rewardCode || current.lastRewardCode;
+      current.lastClaimed = Boolean(r.rewardClaimed);
+      grouped.set(key, current);
+    }
+    const headers = ['Nome','Telefone','Telefone Normalizado','Total Avaliacoes','Primeira Avaliacao','Ultima Avaliacao','Media Geral','Ultimo Brinde','Ultimo Codigo','Ultimo Brinde Resgatado'];
+    const lines = [...grouped.values()].sort((a,b) => new Date(String(b.lastAt || 0)).getTime() - new Date(String(a.lastAt || 0)).getTime()).map((c: any) => [
+      c.name, c.phone, c.normalizedPhone, c.count, c.firstAt, c.lastAt, (c.avgSum / Math.max(1,c.count)).toFixed(2), c.lastReward, c.lastRewardCode, c.lastClaimed ? 'Sim' : 'Nao'
+    ].map(csvCell).join(';'));
+    const name = safeExportFilePart(activeDb.settings?.name || currentCompanyId());
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Disposition', `attachment; filename="clientes_crm_${name}_${new Date().toISOString().slice(0,10)}.csv"`);
+    return res.send('\uFEFFsep=;\n' + headers.map(csvCell).join(';') + '\n' + lines.join('\n'));
+  });
+
+  // Backup completo da empresa. Proprietário ou SuperAdmin.
+  app.get('/api/database/export', requireCompanyOwner, async (_req, res) => {
+    const companyId = currentCompanyId();
+    const company = await pool.query('SELECT empresa_id,nome,slug,plano,status_assinatura,vencimento_em,criado_em,atualizado_em FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1', [companyId]);
+    const concreteDb = tenantDbs.get(companyId) || await loadCompanyDb(companyId);
+    const payload = {
+      format: 'avaliaeganha-company-backup',
+      version: 2,
+      exportedAt: new Date().toISOString(),
+      company: company.rows[0] || { empresa_id: companyId, nome: concreteDb.settings?.name || companyId },
+      data: concreteDb,
+    };
+    const name = safeExportFilePart(concreteDb.settings?.name || companyId);
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Disposition', `attachment; filename="backup_${name}_${new Date().toISOString().slice(0,10)}.json"`);
+    return res.send(JSON.stringify(payload, null, 2));
+  });
+
+  // Restaura backup v2 ou o formato JSON legado.
+  app.post('/api/database/import', requireCompanyOwner, async (req, res) => {
     try {
-      const data = req.body;
-      if (!data || typeof data !== 'object') {
-        return res.status(400).json({ error: 'Arquivo de dados inválido.' });
+      const wrapper = req.body;
+      const companyId = currentCompanyId();
+      if (wrapper?.format === 'avaliaeganha-company-backup' && wrapper?.company?.empresa_id && normalizeCompanyId(wrapper.company.empresa_id) !== companyId) {
+        return res.status(409).json({ error: `Este backup pertence à empresa ${wrapper.company.empresa_id} e não pode ser restaurado em ${companyId}.` });
       }
-      if (data.settings && typeof data.settings === 'object') {
-        activeDb.settings = { ...activeDb.settings, ...data.settings };
-      }
-      if (Array.isArray(data.rewards)) activeDb.rewards = data.rewards;
-      if (Array.isArray(data.waiters)) activeDb.waiters = data.waiters;
-      if (Array.isArray(data.reviews)) activeDb.reviews = data.reviews;
-      saveDb(activeDb);
-      return res.json({ success: true, db: activeDb });
+      const data = wrapper?.format === 'avaliaeganha-company-backup' ? wrapper.data : wrapper;
+      if (!data || typeof data !== 'object') return res.status(400).json({ error: 'Arquivo de backup inválido.' });
+      if (!data.settings || typeof data.settings !== 'object') return res.status(400).json({ error: 'O backup não contém configurações válidas.' });
+      if (!Array.isArray(data.reviews) || !Array.isArray(data.rewards) || !Array.isArray(data.waiters)) return res.status(400).json({ error: 'O backup está incompleto ou em formato incompatível.' });
+      const restoredDb: RestaurantDb = {
+        settings: { ...DEFAULT_SETTINGS, ...data.settings },
+        rewards: data.rewards,
+        waiters: data.waiters,
+        reviews: data.reviews,
+      };
+      tenantDbs.set(companyId, restoredDb);
+      await saveDbToPostgres(restoredDb, companyId);
+      return res.json({ success: true, message: 'Backup restaurado com sucesso.', db: restoredDb });
     } catch (err: any) {
-      return res.status(500).json({ error: err?.message || 'Erro ao importar dados.' });
+      return res.status(500).json({ error: err?.message || 'Erro ao restaurar backup.' });
     }
   });
 
