@@ -62,6 +62,7 @@ import { TableQrDisplay } from './components/TableQrDisplay';
 import { ManagerDashboard } from './components/ManagerDashboard';
 import { SuperAdmin } from './components/SuperAdmin';
 import { LegalPage } from './components/LegalPage';
+import { AccessPortal } from './components/AccessPortal';
 
 function playChimeSound() {
   try {
@@ -85,9 +86,24 @@ function playChimeSound() {
 export default function App() {
   if (typeof window !== 'undefined') {
     const cleanPath = window.location.pathname.replace(/\/$/, '');
+    const params = new URLSearchParams(window.location.search);
     if (cleanPath === '/super-admin') return <SuperAdmin />;
     if (cleanPath === '/privacidade') return <LegalPage kind="privacy" />;
     if (cleanPath === '/termos') return <LegalPage kind="terms" />;
+    if (cleanPath === '/acesso') return <AccessPortal />;
+
+    // app.avaliaeganha.com.br sem empresa/QR é o portal geral de acesso.
+    // Avaliações continuam abrindo normalmente quando a URL contém empresa,
+    // cliente=1, origem=qrcode ou mesa.
+    const hasEvaluationContext = Boolean(
+      params.get('empresa') ||
+      params.get('cliente') ||
+      params.get('origem') === 'qrcode' ||
+      params.get('mesa') ||
+      params.get('gerencia') === '1' ||
+      params.get('reset_token')
+    );
+    if (cleanPath === '' && !hasEvaluationContext) return <AccessPortal />;
   }
   // Links de QR antigos podem ter sido gerados enquanto o painel estava em /gerencia.
   // Se houver marcadores de cliente/QR/mesa, o modo cliente SEMPRE tem prioridade.
