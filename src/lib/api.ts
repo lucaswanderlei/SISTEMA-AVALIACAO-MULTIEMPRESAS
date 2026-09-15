@@ -52,6 +52,31 @@ export interface SyncDataResponse {
   serverTime: string;
 }
 
+export interface CompanyAccessStatus {
+  accessible: boolean;
+  code: 'OK' | 'COMPANY_SUSPENDED' | 'SUBSCRIPTION_EXPIRED' | 'COMPANY_NOT_FOUND' | 'STATUS_ERROR' | string;
+  message?: string | null;
+  company?: {
+    empresaId: string;
+    nome: string;
+    plan: 'basic' | 'pro' | 'premium';
+    subscriptionStatus: 'trial' | 'active' | 'suspended';
+    expiresAt?: string | null;
+  };
+}
+
+export async function apiFetchCompanyStatus(): Promise<CompanyAccessStatus | null> {
+  try {
+    const res = await tenantFetch('/api/company/status', { cache: 'no-store' });
+    const data = await res.json().catch(() => null);
+    if (!data) return null;
+    return data as CompanyAccessStatus;
+  } catch (err) {
+    console.warn('[Company Status] Could not fetch subscription status:', err);
+    return null;
+  }
+}
+
 // Fetch all sync data from server
 export async function apiFetchSync(): Promise<SyncDataResponse | null> {
   try {
