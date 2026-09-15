@@ -214,6 +214,18 @@ async function initPostgres() {
       );
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS avaliacao_password_resets_usuario_idx ON avaliacao_password_resets (usuario_id, expira_em DESC);`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS avaliacao_plataforma_config (
+        id INTEGER PRIMARY KEY,
+        dados JSONB NOT NULL DEFAULT '{}'::jsonb,
+        atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await pool.query(`
+      INSERT INTO avaliacao_plataforma_config (id, dados)
+      VALUES (1, '{"planPrices":{"basic":0,"pro":0,"premium":0}}'::jsonb)
+      ON CONFLICT (id) DO NOTHING;
+    `);
 
     // Compatibilidade com o campo legado "ativo": empresas anteriormente
     // desativadas passam a ser tratadas como assinatura suspensa.
@@ -580,6 +592,35 @@ function normalizeExpiration(value: unknown): string | null {
   const parsed = new Date(String(value));
   if (Number.isNaN(parsed.getTime())) return null;
   return parsed.toISOString();
+}
+
+type PlatformPlanPrices = { basic: number; pro: number; premium: number };
+const DEFAULT_PLAN_PRICES: PlatformPlanPrices = { basic: 0, pro: 0, premium: 0 };
+
+function normalizeMoney(value: unknown): number {
+  const parsed = Number(String(value ?? '').replace(',', '.'));
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.min(1_000_000, Math.round(parsed * 100) / 100));
+}
+
+function normalizePlanPrices(value: any): PlatformPlanPrices {
+  return {
+    basic: normalizeMoney(value?.basic),
+    pro: normalizeMoney(value?.pro),
+    premium: normalizeMoney(value?.premium),
+  };
+}
+
+async function getPlatformPlanPrices(): Promise<PlatformPlanPrices> {
+  const result = await pool.query('SELECT dados FROM avaliacao_plataforma_config WHERE id=1 LIMIT 1');
+  return normalizePlanPrices(result.rows[0]?.dados?.planPrices || DEFAULT_PLAN_PRICES);
+}
+
+function normalizeDashboardPhone(value: unknown): string {
+  let digits = String(value || '').replace(/\D/g, '').replace(/^0+/, '');
+  if (digits.startsWith('55') && digits.length >= 12) digits = digits.slice(2).replace(/^0+/, '');
+  if (digits.length === 10 && /^[6-9]/.test(digits.slice(2))) digits = `${digits.slice(0, 2)}9${digits.slice(2)}`;
+  return digits;
 }
 
 function isCompanyExpired(meta: CompanyAccessMeta): boolean {
@@ -964,6 +1005,118 @@ if (totalEmpresas === 0) {
       ORDER BY criado_em DESC
     `);
     res.json({ companies: result.rows });
+  });
+
+  app.get('/api/admin/dashboard', requireSuperAdmin, async (_req, res) => {
+    const companiesResult = await pool.query(`
+      SELECT empresa_id, nome, ativo, plano, status_assinatura, vencimento_em, dados->'reviews' AS reviews
+      FROM avaliacao_empresas
+      ORDER BY criado_em DESC
+    `);
+    const planPrices = await getPlatformPlanPrices();
+    const now = Date.now();
+    const dayMs = 24 * 60 * 60 * 1000;
+    const thirtyDaysAgo = now - 30 * dayMs;
+    const sevenDaysAhead = now + 7 * dayMs;
+    const dayKeys: string[] = [];
+    const dailyMap = new Map<string, number>();
+    for (let offset = 6; offset >= 0; offset -= 1) {
+      const d = new Date(now - offset * dayMs);
+      const key = d.toISOString().slice(0, 10);
+      dayKeys.push(key);
+      dailyMap.set(key, 0);
+    }
+
+    const statusCounts = { active: 0, trial: 0, suspended: 0, expired: 0 };
+    const planCounts = { basic: 0, pro: 0, premium: 0 };
+    const mrrByPlan = { basic: 0, pro: 0, premium: 0 };
+    const customerPhones = new Set<string>();
+    const topCompanies: Array<{ empresaId: string; nome: string; plan: SubscriptionPlan; status: string; totalReviews: number; reviews30d: number }> = [];
+    let totalReviews = 0;
+    let reviews30d = 0;
+    let expiring7Days = 0;
+    let mrr = 0;
+
+    for (const row of companiesResult.rows) {
+      const plan = normalizeSubscriptionPlan(row.plano);
+      planCounts[plan] += 1;
+      const expiresAt = row.vencimento_em ? new Date(row.vencimento_em).getTime() : NaN;
+      let status: 'active' | 'trial' | 'suspended' | 'expired' = 'active';
+      if (!row.ativo || normalizeSubscriptionStatus(row.status_assinatura) === 'suspended') status = 'suspended';
+      else if (Number.isFinite(expiresAt) && expiresAt <= now) status = 'expired';
+      else if (normalizeSubscriptionStatus(row.status_assinatura) === 'trial') status = 'trial';
+      statusCounts[status] += 1;
+
+      if ((status === 'active' || status === 'trial') && Number.isFinite(expiresAt) && expiresAt > now && expiresAt <= sevenDaysAhead) {
+        expiring7Days += 1;
+      }
+      if (status === 'active') {
+        const value = planPrices[plan] || 0;
+        mrr += value;
+        mrrByPlan[plan] += value;
+      }
+
+      const reviews = Array.isArray(row.reviews) ? row.reviews : [];
+      let company30 = 0;
+      totalReviews += reviews.length;
+      for (const review of reviews) {
+        const phone = normalizeDashboardPhone(review?.customerPhoneNormalized || review?.customerPhone);
+        if (phone) customerPhones.add(`${row.empresa_id}:${phone}`);
+        const created = new Date(String(review?.createdAt || '')).getTime();
+        if (!Number.isFinite(created)) continue;
+        if (created >= thirtyDaysAgo) {
+          reviews30d += 1;
+          company30 += 1;
+        }
+        const dayKey = new Date(created).toISOString().slice(0, 10);
+        if (dailyMap.has(dayKey)) dailyMap.set(dayKey, (dailyMap.get(dayKey) || 0) + 1);
+      }
+      topCompanies.push({
+        empresaId: String(row.empresa_id),
+        nome: String(row.nome || row.empresa_id),
+        plan,
+        status,
+        totalReviews: reviews.length,
+        reviews30d: company30,
+      });
+    }
+
+    topCompanies.sort((a, b) => b.reviews30d - a.reviews30d || b.totalReviews - a.totalReviews || a.nome.localeCompare(b.nome));
+    res.json({
+      generatedAt: new Date().toISOString(),
+      totals: {
+        companies: companiesResult.rowCount || companiesResult.rows.length,
+        ...statusCounts,
+        expiring7Days,
+        totalReviews,
+        reviews30d,
+        uniqueCustomers: customerPhones.size,
+        mrr: Math.round(mrr * 100) / 100,
+      },
+      plans: {
+        counts: planCounts,
+        prices: planPrices,
+        mrrByPlan: {
+          basic: Math.round(mrrByPlan.basic * 100) / 100,
+          pro: Math.round(mrrByPlan.pro * 100) / 100,
+          premium: Math.round(mrrByPlan.premium * 100) / 100,
+        },
+      },
+      dailyReviews: dayKeys.map((date) => ({ date, count: dailyMap.get(date) || 0 })),
+      topCompanies: topCompanies.slice(0, 5),
+    });
+  });
+
+  app.put('/api/admin/dashboard/plan-prices', requireSuperAdmin, async (req, res) => {
+    const planPrices = normalizePlanPrices(req.body || {});
+    await pool.query(
+      `INSERT INTO avaliacao_plataforma_config (id, dados, atualizado_em)
+       VALUES (1, jsonb_build_object('planPrices', $1::jsonb), NOW())
+       ON CONFLICT (id)
+       DO UPDATE SET dados = jsonb_set(COALESCE(avaliacao_plataforma_config.dados, '{}'::jsonb), '{planPrices}', $1::jsonb, TRUE), atualizado_em=NOW()`,
+      [JSON.stringify(planPrices)]
+    );
+    res.json({ success: true, planPrices });
   });
 
   app.post('/api/admin/companies', requireSuperAdmin, async (req, res) => {
