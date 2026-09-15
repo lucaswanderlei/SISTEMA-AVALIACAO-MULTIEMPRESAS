@@ -1,8 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Building2,
+  CalendarDays,
   Check,
+  Clock3,
   ExternalLink,
+  Eye,
+  EyeOff,
   KeyRound,
   LogOut,
   Pencil,
@@ -13,9 +17,11 @@ import {
   ToggleRight,
   Trash2,
   X,
-  Eye,
-  EyeOff,
 } from 'lucide-react';
+
+type SubscriptionPlan = 'basic' | 'pro' | 'premium';
+type SubscriptionStatus = 'trial' | 'active' | 'suspended';
+type EffectiveStatus = SubscriptionStatus | 'expired';
 
 type Company = {
   empresa_id: string;
@@ -23,8 +29,57 @@ type Company = {
   slug: string;
   login?: string;
   ativo: boolean;
+  plano?: SubscriptionPlan;
+  status_assinatura?: SubscriptionStatus;
+  vencimento_em?: string | null;
+  status_efetivo?: EffectiveStatus;
+  total_avaliacoes?: number;
   criado_em?: string;
   atualizado_em?: string;
+};
+
+const addDaysToToday = (days: number) => {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+};
+
+const isoToInputDate = (value?: string | null) => value ? String(value).slice(0, 10) : '';
+const inputDateToIso = (value: string) => value ? `${value}T23:59:59.999Z` : null;
+
+const planLabel = (plan?: SubscriptionPlan) => {
+  if (plan === 'basic') return 'Básico';
+  if (plan === 'premium') return 'Premium';
+  return 'Pro';
+};
+
+const effectiveStatus = (company: Company): EffectiveStatus => {
+  if (company.status_efetivo) return company.status_efetivo;
+  if (!company.ativo || company.status_assinatura === 'suspended') return 'suspended';
+  if (company.vencimento_em && new Date(company.vencimento_em).getTime() <= Date.now()) return 'expired';
+  if (company.status_assinatura === 'trial') return 'trial';
+  return 'active';
+};
+
+const statusLabel = (status: EffectiveStatus) => {
+  if (status === 'trial') return 'Em teste';
+  if (status === 'suspended') return 'Suspensa';
+  if (status === 'expired') return 'Vencida';
+  return 'Ativa';
+};
+
+const statusClass = (status: EffectiveStatus) => {
+  if (status === 'trial') return 'bg-amber-50 text-amber-700 border-amber-200';
+  if (status === 'suspended') return 'bg-stone-200 text-stone-700 border-stone-300';
+  if (status === 'expired') return 'bg-rose-50 text-rose-700 border-rose-200';
+  return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+};
+
+const formatDate = (value?: string | null) => {
+  if (!value) return 'Sem vencimento';
+  const datePart = String(value).slice(0, 10);
+  const [year, month, day] = datePart.split('-');
+  return year && month && day ? `${day}/${month}/${year}` : datePart;
 };
 
 export function SuperAdmin() {
@@ -33,18 +88,28 @@ export function SuperAdmin() {
   const [masterPassword, setMasterPassword] = useState('');
   const [showMasterPassword, setShowMasterPassword] = useState(false);
   const [companies, setCompanies] = useState<Company[]>([]);
+
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [companyLogin, setCompanyLogin] = useState('');
   const [companyPassword, setCompanyPassword] = useState('');
   const [showCompanyPassword, setShowCompanyPassword] = useState(false);
+  const [companyPlan, setCompanyPlan] = useState<SubscriptionPlan>('pro');
+  const [companyStatus, setCompanyStatus] = useState<SubscriptionStatus>('trial');
+  const [companyExpiresAt, setCompanyExpiresAt] = useState(addDaysToToday(7));
+
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [editingLogin, setEditingLogin] = useState('');
   const [editingPassword, setEditingPassword] = useState('');
+  const [editingPlan, setEditingPlan] = useState<SubscriptionPlan>('pro');
+  const [editingStatus, setEditingStatus] = useState<SubscriptionStatus>('active');
+  const [editingExpiresAt, setEditingExpiresAt] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [renewingId, setRenewingId] = useState<string | null>(null);
+  const [changingStatusId, setChangingStatusId] = useState<string | null>(null);
 
   const request = async (url: string, init: RequestInit = {}) => {
     const headers = new Headers(init.headers || {});
@@ -78,6 +143,18 @@ export function SuperAdmin() {
     void load();
   }, [token]);
 
+  const summary = useMemo(() => {
+    const counts = { active: 0, trial: 0, blocked: 0, reviews: 0 };
+    for (const company of companies) {
+      const status = effectiveStatus(company);
+      if (status === 'active') counts.active += 1;
+      else if (status === 'trial') counts.trial += 1;
+      else counts.blocked += 1;
+      counts.reviews += Number(company.total_avaliacoes || 0);
+    }
+    return counts;
+  }, [companies]);
+
   const login = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -106,7 +183,15 @@ export function SuperAdmin() {
     try {
       const res = await request('/api/admin/companies', {
         method: 'POST',
-        body: JSON.stringify({ name, slug, login: companyLogin, password: companyPassword }),
+        body: JSON.stringify({
+          name,
+          slug,
+          login: companyLogin,
+          password: companyPassword,
+          plan: companyPlan,
+          subscriptionStatus: companyStatus,
+          expiresAt: inputDateToIso(companyExpiresAt),
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Não foi possível cadastrar a empresa.');
@@ -114,23 +199,52 @@ export function SuperAdmin() {
       setSlug('');
       setCompanyLogin('');
       setCompanyPassword('');
+      setCompanyPlan('pro');
+      setCompanyStatus('trial');
+      setCompanyExpiresAt(addDaysToToday(7));
       await load();
     } catch (e: any) {
       setError(e.message || 'Erro ao cadastrar.');
     }
   };
 
-  const toggle = async (company: Company) => {
+  const changeStatus = async (company: Company) => {
+    if (changingStatusId) return;
+    setChangingStatusId(company.empresa_id);
     setError('');
     try {
+      const current = effectiveStatus(company);
+      const nextStatus: SubscriptionStatus = current === 'suspended' ? 'active' : 'suspended';
       const res = await request(`/api/admin/companies/${encodeURIComponent(company.empresa_id)}/status`, {
         method: 'PATCH',
-        body: JSON.stringify({ ativo: !company.ativo }),
+        body: JSON.stringify({ subscriptionStatus: nextStatus }),
       });
-      if (!res.ok) throw new Error('Não foi possível alterar o status.');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Não foi possível alterar o status.');
       await load();
     } catch (e: any) {
       setError(e.message || 'Erro ao alterar status.');
+    } finally {
+      setChangingStatusId(null);
+    }
+  };
+
+  const renewCompany = async (company: Company) => {
+    if (renewingId) return;
+    setRenewingId(company.empresa_id);
+    setError('');
+    try {
+      const res = await request(`/api/admin/companies/${encodeURIComponent(company.empresa_id)}/renew`, {
+        method: 'POST',
+        body: JSON.stringify({ days: 30 }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Não foi possível renovar a empresa.');
+      await load();
+    } catch (e: any) {
+      setError(e.message || 'Erro ao renovar empresa.');
+    } finally {
+      setRenewingId(null);
     }
   };
 
@@ -139,6 +253,9 @@ export function SuperAdmin() {
     setEditingName(company.nome);
     setEditingLogin(company.login || company.empresa_id);
     setEditingPassword('');
+    setEditingPlan(company.plano || 'pro');
+    setEditingStatus(company.status_assinatura || (company.ativo ? 'active' : 'suspended'));
+    setEditingExpiresAt(isoToInputDate(company.vencimento_em));
     setError('');
   };
 
@@ -147,6 +264,9 @@ export function SuperAdmin() {
     setEditingName('');
     setEditingLogin('');
     setEditingPassword('');
+    setEditingPlan('pro');
+    setEditingStatus('active');
+    setEditingExpiresAt('');
   };
 
   const saveCompany = async (company: Company) => {
@@ -160,7 +280,14 @@ export function SuperAdmin() {
     try {
       const res = await request(`/api/admin/companies/${encodeURIComponent(company.empresa_id)}`, {
         method: 'PATCH',
-        body: JSON.stringify({ nome: cleanName, login: cleanLogin, password: editingPassword || undefined }),
+        body: JSON.stringify({
+          nome: cleanName,
+          login: cleanLogin,
+          password: editingPassword || undefined,
+          plan: editingPlan,
+          subscriptionStatus: editingStatus,
+          expiresAt: inputDateToIso(editingExpiresAt),
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Não foi possível editar a empresa.');
@@ -236,7 +363,7 @@ export function SuperAdmin() {
   return (
     <div className="min-h-screen bg-stone-100">
       <header className="bg-white border-b border-stone-200">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
           <div>
             <h1 className="text-xl font-black text-stone-900">Painel Multiempresas</h1>
             <p className="text-xs text-stone-500">Administrador geral da plataforma</p>
@@ -254,12 +381,31 @@ export function SuperAdmin() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto p-4 sm:p-6 space-y-6">
+      <main className="max-w-7xl mx-auto p-4 sm:p-6 space-y-6">
         {error && <div className="bg-rose-50 text-rose-700 border border-rose-200 rounded-xl p-3 text-sm font-semibold">{error}</div>}
+
+        <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="bg-white rounded-2xl border border-stone-200 p-4">
+            <div className="text-xs font-bold text-stone-500">Empresas</div>
+            <div className="text-2xl font-black text-stone-900 mt-1">{companies.length}</div>
+          </div>
+          <div className="bg-white rounded-2xl border border-stone-200 p-4">
+            <div className="text-xs font-bold text-emerald-600">Ativas</div>
+            <div className="text-2xl font-black text-stone-900 mt-1">{summary.active}</div>
+          </div>
+          <div className="bg-white rounded-2xl border border-stone-200 p-4">
+            <div className="text-xs font-bold text-amber-600">Em teste</div>
+            <div className="text-2xl font-black text-stone-900 mt-1">{summary.trial}</div>
+          </div>
+          <div className="bg-white rounded-2xl border border-stone-200 p-4">
+            <div className="text-xs font-bold text-rose-600">Suspensas / vencidas</div>
+            <div className="text-2xl font-black text-stone-900 mt-1">{summary.blocked}</div>
+          </div>
+        </section>
 
         <section className="bg-white rounded-2xl border border-stone-200 p-5">
           <h2 className="font-black text-stone-900 mb-4 flex gap-2 items-center"><Plus className="w-5 h-5" />Cadastrar nova empresa</h2>
-          <form onSubmit={createCompany} className="grid md:grid-cols-2 gap-3">
+          <form onSubmit={createCompany} className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
             <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome da empresa" className="border border-stone-300 rounded-xl px-4 py-3" />
             <input
               required
@@ -279,7 +425,31 @@ export function SuperAdmin() {
                 {showCompanyPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
-            <button className="md:col-span-2 bg-rose-600 text-white font-bold px-5 py-3 rounded-xl">Cadastrar empresa com acesso</button>
+            <select value={companyPlan} onChange={(e) => setCompanyPlan(e.target.value as SubscriptionPlan)} className="border border-stone-300 rounded-xl px-4 py-3 bg-white">
+              <option value="basic">Plano Básico</option>
+              <option value="pro">Plano Pro</option>
+              <option value="premium">Plano Premium</option>
+            </select>
+            <select
+              value={companyStatus}
+              onChange={(e) => {
+                const next = e.target.value as SubscriptionStatus;
+                setCompanyStatus(next);
+                if (next === 'trial') setCompanyExpiresAt(addDaysToToday(7));
+                if (next === 'active') setCompanyExpiresAt(addDaysToToday(30));
+              }}
+              className="border border-stone-300 rounded-xl px-4 py-3 bg-white"
+            >
+              <option value="trial">Em teste</option>
+              <option value="active">Ativa</option>
+              <option value="suspended">Suspensa</option>
+            </select>
+            <label className="border border-stone-300 rounded-xl px-3 py-2 flex items-center gap-2 text-sm text-stone-600">
+              <CalendarDays className="w-4 h-4" />
+              <span className="text-xs font-bold whitespace-nowrap">Vencimento</span>
+              <input type="date" value={companyExpiresAt} onChange={(e) => setCompanyExpiresAt(e.target.value)} className="min-w-0 flex-1 bg-transparent outline-none" />
+            </label>
+            <button className="md:col-span-2 lg:col-span-2 bg-rose-600 text-white font-bold px-5 py-3 rounded-xl">Cadastrar empresa com acesso</button>
           </form>
         </section>
 
@@ -287,7 +457,7 @@ export function SuperAdmin() {
           <div className="p-5 border-b border-stone-200 flex items-center justify-between">
             <div>
               <h2 className="font-black text-stone-900 flex gap-2 items-center"><Building2 className="w-5 h-5" />Empresas</h2>
-              <p className="text-xs text-stone-500 mt-1">{companies.length} empresa(s) cadastrada(s)</p>
+              <p className="text-xs text-stone-500 mt-1">{companies.length} empresa(s) • {summary.reviews} avaliação(ões) armazenada(s)</p>
             </div>
             <button onClick={load} className="p-2 rounded-xl bg-stone-100" title="Atualizar"><RefreshCw className={`w-4 h-4 ${busy ? 'animate-spin' : ''}`} /></button>
           </div>
@@ -295,42 +465,81 @@ export function SuperAdmin() {
           <div className="divide-y divide-stone-100">
             {companies.length === 0 && !busy ? (
               <div className="p-8 text-center text-stone-400">Nenhuma empresa cadastrada ainda.</div>
-            ) : companies.map((c) => (
-              <div key={c.empresa_id} className="p-4 sm:p-5 space-y-3">
-                {editingId === c.empresa_id ? (
-                  <div className="grid md:grid-cols-3 gap-2">
-                    <input value={editingName} onChange={(e) => setEditingName(e.target.value)} placeholder="Nome" className="border border-stone-300 rounded-xl px-3 py-2 font-bold" />
-                    <input value={editingLogin} onChange={(e) => setEditingLogin(e.target.value.toLowerCase())} placeholder="Login" className="border border-stone-300 rounded-xl px-3 py-2 font-bold" />
-                    <input type="password" value={editingPassword} onChange={(e) => setEditingPassword(e.target.value)} placeholder="Nova senha (opcional)" className="border border-stone-300 rounded-xl px-3 py-2" />
-                    <div className="md:col-span-3 flex gap-2">
-                      <button onClick={() => void saveCompany(c)} className="px-3 py-2 rounded-xl bg-emerald-600 text-white font-bold flex items-center gap-1"><Check className="w-4 h-4" />Salvar</button>
-                      <button onClick={cancelEdit} className="px-3 py-2 rounded-xl bg-stone-200 text-stone-700 font-bold flex items-center gap-1"><X className="w-4 h-4" />Cancelar</button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <div className="font-extrabold text-stone-900 truncate">{c.nome}</div>
-                        <button onClick={() => startEdit(c)} className="p-1.5 rounded-lg text-stone-500 hover:bg-stone-100" title="Editar empresa"><Pencil className="w-4 h-4" /></button>
+            ) : companies.map((c) => {
+              const currentStatus = effectiveStatus(c);
+              return (
+                <div key={c.empresa_id} className="p-4 sm:p-5 space-y-3">
+                  {editingId === c.empresa_id ? (
+                    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-2">
+                      <input value={editingName} onChange={(e) => setEditingName(e.target.value)} placeholder="Nome" className="border border-stone-300 rounded-xl px-3 py-2 font-bold" />
+                      <input value={editingLogin} onChange={(e) => setEditingLogin(e.target.value.toLowerCase())} placeholder="Login" className="border border-stone-300 rounded-xl px-3 py-2 font-bold" />
+                      <input type="password" value={editingPassword} onChange={(e) => setEditingPassword(e.target.value)} placeholder="Nova senha (opcional)" className="border border-stone-300 rounded-xl px-3 py-2" />
+                      <select value={editingPlan} onChange={(e) => setEditingPlan(e.target.value as SubscriptionPlan)} className="border border-stone-300 rounded-xl px-3 py-2 bg-white">
+                        <option value="basic">Plano Básico</option>
+                        <option value="pro">Plano Pro</option>
+                        <option value="premium">Plano Premium</option>
+                      </select>
+                      <select value={editingStatus} onChange={(e) => setEditingStatus(e.target.value as SubscriptionStatus)} className="border border-stone-300 rounded-xl px-3 py-2 bg-white">
+                        <option value="trial">Em teste</option>
+                        <option value="active">Ativa</option>
+                        <option value="suspended">Suspensa</option>
+                      </select>
+                      <label className="border border-stone-300 rounded-xl px-3 py-2 flex items-center gap-2 text-sm">
+                        <CalendarDays className="w-4 h-4 text-stone-400" />
+                        <input type="date" value={editingExpiresAt} onChange={(e) => setEditingExpiresAt(e.target.value)} className="min-w-0 flex-1 bg-transparent outline-none" />
+                      </label>
+                      <div className="md:col-span-2 lg:col-span-3 flex gap-2">
+                        <button onClick={() => void saveCompany(c)} className="px-3 py-2 rounded-xl bg-emerald-600 text-white font-bold flex items-center gap-1"><Check className="w-4 h-4" />Salvar</button>
+                        <button onClick={cancelEdit} className="px-3 py-2 rounded-xl bg-stone-200 text-stone-700 font-bold flex items-center gap-1"><X className="w-4 h-4" />Cancelar</button>
                       </div>
-                      <div className="text-xs text-stone-500 mt-0.5">ID: {c.empresa_id} • Login: <strong>{c.login || c.empresa_id}</strong></div>
                     </div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <a href={`/gerencia?empresa=${encodeURIComponent(c.empresa_id)}`} target="_blank" rel="noreferrer" className="text-xs font-bold px-3 py-2 rounded-xl bg-stone-900 text-white flex items-center gap-1.5" title="Abrir e entrar com credencial da empresa ou credencial mestre">
-                        <ExternalLink className="w-3.5 h-3.5" />Entrar na empresa
-                      </a>
-                      <button onClick={() => toggle(c)} className={`text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-2 ${c.ativo ? 'bg-emerald-50 text-emerald-700' : 'bg-stone-200 text-stone-600'}`}>
-                        {c.ativo ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}{c.ativo ? 'Ativa' : 'Inativa'}
-                      </button>
-                      <button disabled={deletingId === c.empresa_id} onClick={() => void deleteCompany(c)} className="text-xs font-bold px-3 py-2 rounded-xl bg-rose-50 text-rose-700 flex items-center gap-1.5 disabled:opacity-50">
-                        <Trash2 className="w-3.5 h-3.5" />Excluir
-                      </button>
+                  ) : (
+                    <div className="flex flex-col xl:flex-row xl:items-center gap-3 justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <div className="font-extrabold text-stone-900 truncate">{c.nome}</div>
+                          <span className={`text-[10px] uppercase tracking-wide font-black border px-2 py-0.5 rounded-full ${statusClass(currentStatus)}`}>{statusLabel(currentStatus)}</span>
+                          <span className="text-[10px] uppercase tracking-wide font-black border border-sky-200 bg-sky-50 text-sky-700 px-2 py-0.5 rounded-full">{planLabel(c.plano)}</span>
+                          <button onClick={() => startEdit(c)} className="p-1.5 rounded-lg text-stone-500 hover:bg-stone-100" title="Editar empresa"><Pencil className="w-4 h-4" /></button>
+                        </div>
+                        <div className="text-xs text-stone-500 mt-1">ID: {c.empresa_id} • Login: <strong>{c.login || c.empresa_id}</strong></div>
+                        <div className="text-xs text-stone-500 mt-1 flex items-center gap-3 flex-wrap">
+                          <span className="flex items-center gap-1"><Clock3 className="w-3.5 h-3.5" />Vence: <strong>{formatDate(c.vencimento_em)}</strong></span>
+                          <span>{Number(c.total_avaliacoes || 0)} avaliação(ões)</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <a href={`/?empresa=${encodeURIComponent(c.empresa_id)}&cliente=1`} target="_blank" rel="noreferrer" className="text-xs font-bold px-3 py-2 rounded-xl bg-white border border-stone-300 text-stone-700 flex items-center gap-1.5" title="Abrir página pública de avaliação">
+                          <ExternalLink className="w-3.5 h-3.5" />Avaliação
+                        </a>
+                        <a href={`/gerencia?empresa=${encodeURIComponent(c.empresa_id)}`} target="_blank" rel="noreferrer" className="text-xs font-bold px-3 py-2 rounded-xl bg-stone-900 text-white flex items-center gap-1.5" title="Abrir e entrar com credencial da empresa ou credencial mestre">
+                          <ExternalLink className="w-3.5 h-3.5" />Entrar na empresa
+                        </a>
+                        <button
+                          disabled={renewingId === c.empresa_id}
+                          onClick={() => void renewCompany(c)}
+                          className="text-xs font-bold px-3 py-2 rounded-xl bg-sky-50 text-sky-700 flex items-center gap-1.5 disabled:opacity-50"
+                          title="Adicionar 30 dias ao vencimento e deixar a empresa ativa"
+                        >
+                          <CalendarDays className="w-3.5 h-3.5" />{renewingId === c.empresa_id ? 'Renovando...' : '+30 dias'}
+                        </button>
+                        <button
+                          disabled={changingStatusId === c.empresa_id}
+                          onClick={() => void changeStatus(c)}
+                          className={`text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-2 disabled:opacity-50 ${currentStatus === 'suspended' ? 'bg-emerald-50 text-emerald-700' : 'bg-stone-200 text-stone-700'}`}
+                        >
+                          {currentStatus === 'suspended' ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
+                          {currentStatus === 'suspended' ? 'Ativar' : 'Suspender'}
+                        </button>
+                        <button disabled={deletingId === c.empresa_id} onClick={() => void deleteCompany(c)} className="text-xs font-bold px-3 py-2 rounded-xl bg-rose-50 text-rose-700 flex items-center gap-1.5 disabled:opacity-50">
+                          <Trash2 className="w-3.5 h-3.5" />Excluir
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                )}
-              </div>
-            ))}
+                  )}
+                </div>
+              );
+            })}
           </div>
         </section>
       </main>
