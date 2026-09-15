@@ -45,9 +45,37 @@ function superAdminCredentialsMatch(login: unknown, password: unknown): boolean 
   return safeEqualText(String(login || '').trim(), configuredLogin) && safeEqualText(String(password || ''), configuredPassword);
 }
 
-type AuthSession = { role: 'superadmin' | 'manager'; companyId?: string; expiresAt: number };
+type CompanyAccessLevel = 'owner' | 'manager' | 'viewer';
+type AuthSession = { role: 'superadmin' | 'manager'; companyId?: string; userId?: string; userName?: string; accessLevel?: CompanyAccessLevel; expiresAt: number };
 const authSessions = new Map<string, AuthSession>();
 const AUTH_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+type RateBucket = { count: number; resetAt: number };
+const authRateBuckets = new Map<string, RateBucket>();
+
+function rateLimitKey(req: express.Request, scope: string, login?: unknown): string {
+  const forwarded = String(req.header('x-forwarded-for') || '').split(',')[0].trim();
+  const ip = forwarded || req.ip || req.socket?.remoteAddress || 'unknown';
+  return `${scope}:${ip}:${String(login || '').trim().toLowerCase()}`;
+}
+
+function consumeRateLimit(key: string, maxAttempts: number, windowMs: number): { allowed: boolean; retryAfterSeconds: number } {
+  const now = Date.now();
+  const current = authRateBuckets.get(key);
+  if (!current || current.resetAt <= now) {
+    authRateBuckets.set(key, { count: 1, resetAt: now + windowMs });
+    return { allowed: true, retryAfterSeconds: 0 };
+  }
+  if (current.count >= maxAttempts) {
+    return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((current.resetAt - now) / 1000)) };
+  }
+  current.count += 1;
+  authRateBuckets.set(key, current);
+  return { allowed: true, retryAfterSeconds: 0 };
+}
+
+function clearRateLimit(key: string) {
+  authRateBuckets.delete(key);
+}
 
 function createAuthSession(session: Omit<AuthSession, 'expiresAt'>): string {
   const token = crypto.randomBytes(32).toString('hex');
@@ -66,6 +94,68 @@ function getAuthSession(req: express.Request): AuthSession | null {
     return null;
   }
   return session;
+}
+
+function invalidateUserSessions(userId: string) {
+  for (const [token, session] of authSessions.entries()) {
+    if (session.userId === userId) authSessions.delete(token);
+  }
+}
+
+function invalidateCompanySessions(companyId: string) {
+  for (const [token, session] of authSessions.entries()) {
+    if (session.companyId === companyId && session.role !== 'superadmin') authSessions.delete(token);
+  }
+}
+
+function normalizeAccessLevel(value: unknown): CompanyAccessLevel {
+  const level = String(value || '').trim().toLowerCase();
+  if (level === 'viewer') return 'viewer';
+  if (level === 'manager') return 'manager';
+  return 'owner';
+}
+
+function isValidEmail(value: unknown): boolean {
+  const email = String(value || '').trim();
+  return !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function passwordResetTokenHash(token: string): string {
+  return crypto.createHash('sha256').update(String(token)).digest('hex');
+}
+
+async function sendPasswordResetEmail(to: string, resetUrl: string, companyName: string, userName: string): Promise<void> {
+  const apiKey = String(process.env.RESEND_API_KEY || '').trim();
+  const from = String(process.env.PASSWORD_RESET_FROM_EMAIL || process.env.RESEND_FROM_EMAIL || '').trim();
+  if (!apiKey || !from) {
+    const err: any = new Error('Recuperação por e-mail ainda não está configurada no servidor.');
+    err.code = 'PASSWORD_EMAIL_NOT_CONFIGURED';
+    throw err;
+  }
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from,
+      to: [to],
+      subject: `Redefinição de senha - ${companyName}`,
+      text: `Olá ${userName || 'usuário'},
+
+Recebemos uma solicitação para redefinir sua senha de acesso ao painel de ${companyName}.
+
+Abra o link abaixo. Ele expira em 30 minutos e pode ser usado apenas uma vez:
+${resetUrl}
+
+Se você não solicitou a alteração, ignore esta mensagem.`,
+    }),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(`Não foi possível enviar o e-mail de recuperação.${detail ? ` ${detail.slice(0, 180)}` : ''}`);
+  }
 }
 async function initPostgres() {
   try {
@@ -96,6 +186,35 @@ async function initPostgres() {
     await pool.query(`ALTER TABLE avaliacao_empresas ADD COLUMN IF NOT EXISTS status_assinatura TEXT NOT NULL DEFAULT 'active';`);
     await pool.query(`ALTER TABLE avaliacao_empresas ADD COLUMN IF NOT EXISTS vencimento_em TIMESTAMPTZ;`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS avaliacao_empresas_login_lower_idx ON avaliacao_empresas (LOWER(login)) WHERE login IS NOT NULL;`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS avaliacao_usuarios (
+        id TEXT PRIMARY KEY,
+        empresa_id TEXT NOT NULL REFERENCES avaliacao_empresas(empresa_id) ON DELETE CASCADE,
+        nome TEXT NOT NULL,
+        login TEXT NOT NULL,
+        email TEXT,
+        senha_hash TEXT NOT NULL,
+        perfil TEXT NOT NULL DEFAULT 'manager',
+        ativo BOOLEAN NOT NULL DEFAULT TRUE,
+        ultimo_acesso_em TIMESTAMPTZ,
+        criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS avaliacao_usuarios_empresa_login_idx ON avaliacao_usuarios (empresa_id, LOWER(login));`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS avaliacao_password_resets (
+        id TEXT PRIMARY KEY,
+        empresa_id TEXT NOT NULL REFERENCES avaliacao_empresas(empresa_id) ON DELETE CASCADE,
+        usuario_id TEXT NOT NULL REFERENCES avaliacao_usuarios(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL UNIQUE,
+        expira_em TIMESTAMPTZ NOT NULL,
+        usado_em TIMESTAMPTZ,
+        criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS avaliacao_password_resets_usuario_idx ON avaliacao_password_resets (usuario_id, expira_em DESC);`);
+
     // Compatibilidade com o campo legado "ativo": empresas anteriormente
     // desativadas passam a ser tratadas como assinatura suspensa.
     await pool.query(`
@@ -116,6 +235,18 @@ async function initPostgres() {
       await pool.query(
         'UPDATE avaliacao_empresas SET login=$2, senha_hash=$3, dados=$4::jsonb WHERE empresa_id=$1',
         [row.empresa_id, nextLogin, nextHash, JSON.stringify(nextData)]
+      );
+      await pool.query(
+        `INSERT INTO avaliacao_usuarios (id, empresa_id, nome, login, senha_hash, perfil, ativo)
+         VALUES ($1,$2,$3,$4,$5,'owner',TRUE)
+         ON CONFLICT (id) DO UPDATE
+           SET nome=EXCLUDED.nome,
+               login=EXCLUDED.login,
+               senha_hash=CASE WHEN avaliacao_usuarios.senha_hash IS NULL OR avaliacao_usuarios.senha_hash='' THEN EXCLUDED.senha_hash ELSE avaliacao_usuarios.senha_hash END,
+               perfil='owner',
+               ativo=TRUE,
+               atualizado_em=NOW()`,
+        [`owner:${row.empresa_id}`, row.empresa_id, String(nextData?.settings?.name || row.empresa_id), nextLogin, nextHash]
       );
     }
     console.log('[PostgreSQL] Banco conectado; empresas com login/senha e tabelas prontas.');
@@ -697,7 +828,7 @@ if (totalEmpresas === 0) {
     // These routes need to identify the tenant but must remain reachable even
     // when the subscription is suspended/expired. This is necessary so the UI
     // can show the correct message and so the SuperAdmin can still authenticate.
-    if (req.path === '/api/company/status' || req.path === '/api/auth/manager') {
+    if (req.path === '/api/company/status' || req.path === '/api/auth/manager' || req.path === '/api/auth/forgot-password' || req.path === '/api/auth/reset-password') {
       return tenantContext.run({ companyId }, next);
     }
 
@@ -761,6 +892,22 @@ if (totalEmpresas === 0) {
     return res.status(403).json({ error: 'Sessão sem permissão para esta empresa.' });
   }
 
+  function requireCompanyEditor(req: express.Request, res: express.Response, next: express.NextFunction) {
+    const session = getAuthSession(req);
+    if (!session) return res.status(401).json({ error: 'Faça login novamente.' });
+    if (!sessionCanManageCompany(req)) return res.status(403).json({ error: 'Sessão sem permissão para esta empresa.' });
+    if (session.role === 'superadmin' || normalizeAccessLevel(session.accessLevel) !== 'viewer') return next();
+    return res.status(403).json({ error: 'Este usuário possui acesso somente para consulta.' });
+  }
+
+  function requireCompanyOwner(req: express.Request, res: express.Response, next: express.NextFunction) {
+    const session = getAuthSession(req);
+    if (!session) return res.status(401).json({ error: 'Faça login novamente.' });
+    if (!sessionCanManageCompany(req)) return res.status(403).json({ error: 'Sessão sem permissão para esta empresa.' });
+    if (session.role === 'superadmin' || normalizeAccessLevel(session.accessLevel) === 'owner') return next();
+    return res.status(403).json({ error: 'Apenas o proprietário/administrador principal pode realizar esta ação.' });
+  }
+
   function publicSettingsOnly(settings: Record<string, any>) {
     const safe = { ...settings };
     // Nunca exponha credenciais, tokens ou dados de gerência na página pública.
@@ -775,9 +922,16 @@ if (totalEmpresas === 0) {
 
   app.post('/api/admin/login', (req, res) => {
     const { login, password } = req.body || {};
+    const key = rateLimitKey(req, 'superadmin-login', login);
+    const limit = consumeRateLimit(key, 8, 15 * 60 * 1000);
+    if (!limit.allowed) {
+      res.setHeader('Retry-After', String(limit.retryAfterSeconds));
+      return res.status(429).json({ error: 'Muitas tentativas de acesso. Aguarde alguns minutos e tente novamente.' });
+    }
     if (!superAdminCredentialsMatch(login, password)) {
       return res.status(401).json({ error: 'Login ou senha mestre inválidos.' });
     }
+    clearRateLimit(key);
     const token = createAuthSession({ role: 'superadmin' });
     return res.json({ success: true, token, role: 'superadmin', expiresInHours: 8 });
   });
@@ -789,6 +943,7 @@ if (totalEmpresas === 0) {
         nome,
         slug,
         login,
+        (SELECT u.email FROM avaliacao_usuarios u WHERE u.empresa_id=avaliacao_empresas.empresa_id AND u.perfil='owner' LIMIT 1) AS recovery_email,
         ativo,
         plano,
         status_assinatura,
@@ -816,6 +971,7 @@ if (totalEmpresas === 0) {
     const nome = String(req.body?.name || '').trim();
     const login = String(req.body?.login || empresaId).trim().toLowerCase();
     const password = String(req.body?.password || '').trim();
+    const recoveryEmail = String(req.body?.recoveryEmail || '').trim().toLowerCase();
     const plan = normalizeSubscriptionPlan(req.body?.plan);
     const subscriptionStatus = normalizeSubscriptionStatus(req.body?.subscriptionStatus || 'trial');
     const rawExpiresAt = req.body?.expiresAt;
@@ -823,7 +979,8 @@ if (totalEmpresas === 0) {
 
     if (!nome || empresaId === 'demo') return res.status(400).json({ error: 'Informe nome e slug válidos.' });
     if (login.length < 3) return res.status(400).json({ error: 'O login da empresa deve ter pelo menos 3 caracteres.' });
-    if (password.length < 4) return res.status(400).json({ error: 'A senha da empresa deve ter pelo menos 4 caracteres.' });
+    if (password.length < 6) return res.status(400).json({ error: 'A senha da empresa deve ter pelo menos 6 caracteres.' });
+    if (!isValidEmail(recoveryEmail)) return res.status(400).json({ error: 'Informe um e-mail de recuperação válido.' });
     if (rawExpiresAt !== undefined && rawExpiresAt !== null && String(rawExpiresAt).trim() !== '' && !expiresAt) {
       return res.status(400).json({ error: 'Informe uma data de vencimento válida.' });
     }
@@ -847,6 +1004,12 @@ if (totalEmpresas === 0) {
        VALUES ($1,$2,$1,$3,$4::jsonb,$5,$6,$7,$8,$9)`,
       [empresaId, nome, ativo, JSON.stringify(db), login, hashPassword(password), plan, subscriptionStatus, expiresAt]
     );
+    await pool.query(
+      `INSERT INTO avaliacao_usuarios (id, empresa_id, nome, login, email, senha_hash, perfil, ativo)
+       VALUES ($1,$2,$3,$4,$5,$6,'owner',TRUE)
+       ON CONFLICT (id) DO UPDATE SET nome=EXCLUDED.nome, login=EXCLUDED.login, email=EXCLUDED.email, senha_hash=EXCLUDED.senha_hash, perfil='owner', ativo=TRUE, atualizado_em=NOW()`,
+      [`owner:${empresaId}`, empresaId, nome, login, recoveryEmail || null, hashPassword(password)]
+    );
     tenantDbs.set(empresaId, db);
     res.status(201).json({
       success: true,
@@ -855,6 +1018,7 @@ if (totalEmpresas === 0) {
         nome,
         slug: empresaId,
         login,
+        recoveryEmail: recoveryEmail || null,
         plan,
         subscriptionStatus,
         expiresAt,
@@ -909,9 +1073,11 @@ if (totalEmpresas === 0) {
     const nome = String(req.body?.nome || req.body?.name || '').trim();
     const login = String(req.body?.login || '').trim().toLowerCase();
     const password = String(req.body?.password || '').trim();
+    const recoveryEmail = Object.prototype.hasOwnProperty.call(req.body || {}, 'recoveryEmail') ? String(req.body?.recoveryEmail || '').trim().toLowerCase() : undefined;
     if (!nome) return res.status(400).json({ error: 'Informe um nome válido.' });
     if (login && login.length < 3) return res.status(400).json({ error: 'O login deve ter pelo menos 3 caracteres.' });
-    if (password && password.length < 4) return res.status(400).json({ error: 'A nova senha deve ter pelo menos 4 caracteres.' });
+    if (password && password.length < 6) return res.status(400).json({ error: 'A nova senha deve ter pelo menos 6 caracteres.' });
+    if (recoveryEmail !== undefined && !isValidEmail(recoveryEmail)) return res.status(400).json({ error: 'Informe um e-mail de recuperação válido.' });
 
     const result = await pool.query(
       'SELECT dados, login, plano, status_assinatura, vencimento_em FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1',
@@ -940,6 +1106,11 @@ if (totalEmpresas === 0) {
 
     const duplicateLogin = await pool.query('SELECT empresa_id FROM avaliacao_empresas WHERE LOWER(login)=LOWER($1) AND empresa_id<>$2 LIMIT 1', [nextLogin, id]);
     if (duplicateLogin.rows[0]) return res.status(409).json({ error: 'Este login já está sendo usado por outra empresa.' });
+    const duplicateCompanyUser = await pool.query(
+      `SELECT id FROM avaliacao_usuarios WHERE empresa_id=$1 AND LOWER(login)=LOWER($2) AND id<>$3 LIMIT 1`,
+      [id, nextLogin, `owner:${id}`]
+    );
+    if (duplicateCompanyUser.rows[0]) return res.status(409).json({ error: 'Este login já está sendo usado por outro usuário desta empresa.' });
 
     const dados = result.rows[0].dados || freshDb();
     dados.settings = { ...DEFAULT_SETTINGS, ...(dados.settings || {}), name: nome, managerLogin: nextLogin };
@@ -969,6 +1140,20 @@ if (totalEmpresas === 0) {
       tenantDbs.set(id, cached);
     }
 
+    const ownerId = `owner:${id}`;
+    const ownerFields = await pool.query('SELECT email, senha_hash FROM avaliacao_usuarios WHERE id=$1 LIMIT 1', [ownerId]);
+    const ownerEmail = recoveryEmail !== undefined ? (recoveryEmail || null) : (ownerFields.rows[0]?.email || null);
+    const ownerHash = password ? hashPassword(password) : (ownerFields.rows[0]?.senha_hash || null);
+    if (ownerHash) {
+      await pool.query(
+        `INSERT INTO avaliacao_usuarios (id, empresa_id, nome, login, email, senha_hash, perfil, ativo)
+         VALUES ($1,$2,$3,$4,$5,$6,'owner',TRUE)
+         ON CONFLICT (id) DO UPDATE SET nome=EXCLUDED.nome, login=EXCLUDED.login, email=EXCLUDED.email, senha_hash=EXCLUDED.senha_hash, perfil='owner', ativo=TRUE, atualizado_em=NOW()`,
+        [ownerId, id, nome, nextLogin, ownerEmail, ownerHash]
+      );
+      if (password) invalidateUserSessions(ownerId);
+    }
+
     if (!ativo) tenantDbs.delete(id);
 
     res.json({
@@ -976,6 +1161,7 @@ if (totalEmpresas === 0) {
       empresaId: id,
       nome,
       login: nextLogin,
+      recoveryEmail: ownerEmail,
       plan: nextPlan,
       subscriptionStatus: nextStatus,
       expiresAt: nextExpiresAt,
@@ -1048,13 +1234,20 @@ if (totalEmpresas === 0) {
     try {
       const { login, password } = req.body || {};
       const companyId = currentCompanyId();
+      const loginRateKey = rateLimitKey(req, `company-login:${companyId}`, login);
+      const loginLimit = consumeRateLimit(loginRateKey, 10, 15 * 60 * 1000);
+      if (!loginLimit.allowed) {
+        res.setHeader('Retry-After', String(loginLimit.retryAfterSeconds));
+        return res.status(429).json({ error: 'Muitas tentativas de login. Aguarde alguns minutos e tente novamente.' });
+      }
 
       const meta = await getCompanyAccessMeta(companyId);
       if (!meta) return res.status(404).json({ error: 'Empresa não encontrada.', code: 'COMPANY_NOT_FOUND' });
 
       if (superAdminCredentialsMatch(login, password)) {
+        clearRateLimit(loginRateKey);
         const token = createAuthSession({ role: 'superadmin' });
-        return res.json({ success: true, token, role: 'superadmin', companyId });
+        return res.json({ success: true, token, role: 'superadmin', companyId, accessLevel: 'owner', userName: 'SuperAdmin' });
       }
 
       const block = companyBlock(meta);
@@ -1066,42 +1259,287 @@ if (totalEmpresas === 0) {
         });
       }
 
+      const normalizedLogin = String(login || '').trim().toLowerCase();
       const result = await pool.query(
-        'SELECT login, senha_hash FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1',
-        [companyId]
+        `SELECT id, nome, login, senha_hash, perfil, ativo
+         FROM avaliacao_usuarios
+         WHERE empresa_id=$1 AND LOWER(login)=LOWER($2)
+         LIMIT 1`,
+        [companyId, normalizedLogin]
       );
-      const company = result.rows[0];
-      if (!company || !safeEqualText(String(login || '').trim().toLowerCase(), String(company.login || '').trim().toLowerCase()) || !verifyPassword(String(password || ''), company.senha_hash)) {
+      const user = result.rows[0];
+      if (!user || !user.ativo || !safeEqualText(normalizedLogin, String(user.login || '').trim().toLowerCase()) || !verifyPassword(String(password || ''), user.senha_hash)) {
         return res.status(401).json({ error: 'Login ou senha inválidos.' });
       }
-      const token = createAuthSession({ role: 'manager', companyId });
-      return res.json({ success: true, token, role: 'manager', companyId, login: company.login });
+      const accessLevel = normalizeAccessLevel(user.perfil);
+      clearRateLimit(loginRateKey);
+      const token = createAuthSession({ role: 'manager', companyId, userId: user.id, userName: user.nome, accessLevel });
+      await pool.query('UPDATE avaliacao_usuarios SET ultimo_acesso_em=NOW(), atualizado_em=NOW() WHERE id=$1', [user.id]);
+      return res.json({ success: true, token, role: 'manager', companyId, login: user.login, userId: user.id, userName: user.nome, accessLevel });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Erro ao autenticar.' });
     }
   });
 
-  app.post('/api/settings/access', requireCompanyManager, async (req, res) => {
+  app.post('/api/auth/forgot-password', async (req, res) => {
+    try {
+      const companyId = currentCompanyId();
+      const login = String(req.body?.login || '').trim().toLowerCase();
+      if (!login) return res.status(400).json({ error: 'Informe o login de acesso.' });
+      const resetRateKey = rateLimitKey(req, `password-reset:${companyId}`, login);
+      const resetLimit = consumeRateLimit(resetRateKey, 3, 15 * 60 * 1000);
+      if (!resetLimit.allowed) {
+        res.setHeader('Retry-After', String(resetLimit.retryAfterSeconds));
+        return res.status(429).json({ error: 'Muitas solicitações de recuperação. Aguarde alguns minutos e tente novamente.' });
+      }
+
+      const result = await pool.query(
+        `SELECT u.id, u.nome, u.email, u.ativo, e.nome AS empresa_nome
+         FROM avaliacao_usuarios u
+         JOIN avaliacao_empresas e ON e.empresa_id=u.empresa_id
+         WHERE u.empresa_id=$1 AND LOWER(u.login)=LOWER($2)
+         LIMIT 1`,
+        [companyId, login]
+      );
+      const user = result.rows[0];
+      // Evita revelar logins inexistentes.
+      if (!user || !user.ativo) {
+        return res.json({ success: true, message: 'Se o login estiver cadastrado e possuir e-mail de recuperação, você receberá as instruções.' });
+      }
+      if (!user.email) {
+        return res.status(400).json({ error: 'Este acesso ainda não possui e-mail de recuperação cadastrado. Solicite ao proprietário ou SuperAdmin a redefinição da senha.' });
+      }
+
+      const token = crypto.randomBytes(32).toString('hex');
+      const tokenHash = passwordResetTokenHash(token);
+      const resetId = crypto.randomUUID();
+      await pool.query('DELETE FROM avaliacao_password_resets WHERE usuario_id=$1 AND usado_em IS NULL', [user.id]);
+      await pool.query(
+        `INSERT INTO avaliacao_password_resets (id, empresa_id, usuario_id, token_hash, expira_em)
+         VALUES ($1,$2,$3,$4,NOW() + INTERVAL '30 minutes')`,
+        [resetId, companyId, user.id, tokenHash]
+      );
+
+      const proto = String(req.header('x-forwarded-proto') || req.protocol || 'https').split(',')[0].trim();
+      const host = String(req.get('host') || '').trim();
+      const baseUrl = String(process.env.PUBLIC_APP_URL || (host ? `${proto}://${host}` : '')).replace(/\/$/, '');
+      const resetUrl = `${baseUrl}/gerencia?empresa=${encodeURIComponent(companyId)}&reset_token=${encodeURIComponent(token)}`;
+      try {
+        await sendPasswordResetEmail(String(user.email), resetUrl, String(user.empresa_nome || companyId), String(user.nome || ''));
+      } catch (emailErr: any) {
+        await pool.query('DELETE FROM avaliacao_password_resets WHERE id=$1', [resetId]).catch(() => {});
+        if (emailErr?.code === 'PASSWORD_EMAIL_NOT_CONFIGURED') {
+          return res.status(503).json({ error: 'A recuperação por e-mail ainda não foi configurada pelo administrador da plataforma.' });
+        }
+        throw emailErr;
+      }
+
+      return res.json({ success: true, message: `Enviamos um link de redefinição para o e-mail cadastrado. O link expira em 30 minutos.` });
+    } catch (err: any) {
+      console.error('[Auth] Erro ao solicitar recuperação de senha:', err);
+      return res.status(500).json({ error: err?.message || 'Não foi possível iniciar a recuperação de senha.' });
+    }
+  });
+
+  app.post('/api/auth/reset-password', async (req, res) => {
+    try {
+      const companyId = currentCompanyId();
+      const token = String(req.body?.token || '').trim();
+      const password = String(req.body?.password || '').trim();
+      if (!token) return res.status(400).json({ error: 'Link de redefinição inválido.' });
+      if (password.length < 6) return res.status(400).json({ error: 'A nova senha deve ter pelo menos 6 caracteres.' });
+
+      const tokenHash = passwordResetTokenHash(token);
+      const result = await pool.query(
+        `SELECT r.id AS reset_id, r.usuario_id, u.perfil
+         FROM avaliacao_password_resets r
+         JOIN avaliacao_usuarios u ON u.id=r.usuario_id
+         WHERE r.empresa_id=$1 AND r.token_hash=$2 AND r.usado_em IS NULL AND r.expira_em>NOW() AND u.ativo=TRUE
+         LIMIT 1`,
+        [companyId, tokenHash]
+      );
+      const reset = result.rows[0];
+      if (!reset) return res.status(400).json({ error: 'Este link é inválido, já foi utilizado ou expirou.' });
+
+      const nextHash = hashPassword(password);
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('UPDATE avaliacao_usuarios SET senha_hash=$2, atualizado_em=NOW() WHERE id=$1', [reset.usuario_id, nextHash]);
+        if (normalizeAccessLevel(reset.perfil) === 'owner') {
+          await client.query('UPDATE avaliacao_empresas SET senha_hash=$2, atualizado_em=NOW() WHERE empresa_id=$1', [companyId, nextHash]);
+        }
+        await client.query('UPDATE avaliacao_password_resets SET usado_em=NOW() WHERE id=$1', [reset.reset_id]);
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
+      }
+      invalidateUserSessions(String(reset.usuario_id));
+      return res.json({ success: true, message: 'Senha redefinida com sucesso. Você já pode entrar com a nova senha.' });
+    } catch (err: any) {
+      console.error('[Auth] Erro ao redefinir senha:', err);
+      return res.status(500).json({ error: err?.message || 'Não foi possível redefinir a senha.' });
+    }
+  });
+
+  app.get('/api/users', requireCompanyOwner, async (_req, res) => {
+    try {
+      const companyId = currentCompanyId();
+      const result = await pool.query(
+        `SELECT id, nome, login, email, perfil, ativo, ultimo_acesso_em, criado_em, atualizado_em
+         FROM avaliacao_usuarios
+         WHERE empresa_id=$1
+         ORDER BY CASE WHEN perfil='owner' THEN 0 ELSE 1 END, nome ASC`,
+        [companyId]
+      );
+      return res.json({ users: result.rows });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Erro ao carregar usuários.' });
+    }
+  });
+
+  app.post('/api/users', requireCompanyOwner, async (req, res) => {
+    try {
+      const companyId = currentCompanyId();
+      const nome = String(req.body?.name || req.body?.nome || '').trim();
+      const login = String(req.body?.login || '').trim().toLowerCase();
+      const email = String(req.body?.email || '').trim().toLowerCase();
+      const password = String(req.body?.password || '').trim();
+      const accessLevel = normalizeAccessLevel(req.body?.accessLevel || req.body?.perfil || 'manager');
+      if (!nome) return res.status(400).json({ error: 'Informe o nome do usuário.' });
+      if (login.length < 3) return res.status(400).json({ error: 'O login deve ter pelo menos 3 caracteres.' });
+      if (password.length < 6) return res.status(400).json({ error: 'A senha deve ter pelo menos 6 caracteres.' });
+      if (!isValidEmail(email)) return res.status(400).json({ error: 'Informe um e-mail válido.' });
+      if (accessLevel === 'owner') return res.status(400).json({ error: 'O acesso de proprietário é o acesso principal da empresa e não pode ser duplicado.' });
+
+      const duplicate = await pool.query('SELECT id FROM avaliacao_usuarios WHERE empresa_id=$1 AND LOWER(login)=LOWER($2) LIMIT 1', [companyId, login]);
+      if (duplicate.rows[0]) return res.status(409).json({ error: 'Este login já está sendo usado nesta empresa.' });
+      const id = crypto.randomUUID();
+      const result = await pool.query(
+        `INSERT INTO avaliacao_usuarios (id, empresa_id, nome, login, email, senha_hash, perfil, ativo)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,TRUE)
+         RETURNING id, nome, login, email, perfil, ativo, ultimo_acesso_em, criado_em, atualizado_em`,
+        [id, companyId, nome, login, email || null, hashPassword(password), accessLevel]
+      );
+      return res.status(201).json({ success: true, user: result.rows[0] });
+    } catch (err: any) {
+      if (String(err?.code) === '23505') return res.status(409).json({ error: 'Este login já está sendo usado nesta empresa.' });
+      return res.status(500).json({ error: err?.message || 'Erro ao criar usuário.' });
+    }
+  });
+
+  app.patch('/api/users/:id', requireCompanyOwner, async (req, res) => {
+    try {
+      const companyId = currentCompanyId();
+      const id = String(req.params.id || '').trim();
+      const currentResult = await pool.query('SELECT * FROM avaliacao_usuarios WHERE id=$1 AND empresa_id=$2 LIMIT 1', [id, companyId]);
+      const current = currentResult.rows[0];
+      if (!current) return res.status(404).json({ error: 'Usuário não encontrado.' });
+
+      const isOwner = normalizeAccessLevel(current.perfil) === 'owner';
+      const nome = Object.prototype.hasOwnProperty.call(req.body || {}, 'name') || Object.prototype.hasOwnProperty.call(req.body || {}, 'nome')
+        ? String(req.body?.name || req.body?.nome || '').trim()
+        : String(current.nome);
+      const login = Object.prototype.hasOwnProperty.call(req.body || {}, 'login')
+        ? String(req.body?.login || '').trim().toLowerCase()
+        : String(current.login);
+      const email = Object.prototype.hasOwnProperty.call(req.body || {}, 'email')
+        ? String(req.body?.email || '').trim().toLowerCase()
+        : String(current.email || '');
+      const password = String(req.body?.password || '').trim();
+      const requestedLevel = normalizeAccessLevel(req.body?.accessLevel || req.body?.perfil || current.perfil);
+      const accessLevel: CompanyAccessLevel = isOwner ? 'owner' : (requestedLevel === 'owner' ? 'manager' : requestedLevel);
+      const active = isOwner ? true : (req.body?.active === undefined && req.body?.ativo === undefined ? Boolean(current.ativo) : Boolean(req.body?.active ?? req.body?.ativo));
+
+      if (!nome) return res.status(400).json({ error: 'Informe o nome do usuário.' });
+      if (login.length < 3) return res.status(400).json({ error: 'O login deve ter pelo menos 3 caracteres.' });
+      if (!isValidEmail(email)) return res.status(400).json({ error: 'Informe um e-mail válido.' });
+      if (password && password.length < 6) return res.status(400).json({ error: 'A nova senha deve ter pelo menos 6 caracteres.' });
+      const duplicate = await pool.query('SELECT id FROM avaliacao_usuarios WHERE empresa_id=$1 AND LOWER(login)=LOWER($2) AND id<>$3 LIMIT 1', [companyId, login, id]);
+      if (duplicate.rows[0]) return res.status(409).json({ error: 'Este login já está sendo usado nesta empresa.' });
+
+      const nextHash = password ? hashPassword(password) : current.senha_hash;
+      const result = await pool.query(
+        `UPDATE avaliacao_usuarios
+         SET nome=$3, login=$4, email=$5, senha_hash=$6, perfil=$7, ativo=$8, atualizado_em=NOW()
+         WHERE id=$1 AND empresa_id=$2
+         RETURNING id, nome, login, email, perfil, ativo, ultimo_acesso_em, criado_em, atualizado_em`,
+        [id, companyId, nome, login, email || null, nextHash, accessLevel, active]
+      );
+
+      if (isOwner) {
+        const currentDb = tenantDbs.get(companyId) || await loadCompanyDb(companyId);
+        currentDb.settings = { ...currentDb.settings, managerLogin: login } as any;
+        tenantDbs.set(companyId, currentDb);
+        await pool.query(
+          `UPDATE avaliacao_empresas
+           SET login=$2, senha_hash=$3,
+               dados=jsonb_set(COALESCE(dados,'{}'::jsonb), '{settings}', COALESCE(dados->'settings','{}'::jsonb) || $4::jsonb, true),
+               atualizado_em=NOW()
+           WHERE empresa_id=$1`,
+          [companyId, login, nextHash, JSON.stringify({ managerLogin: login })]
+        );
+      }
+      if (password || !active || login !== current.login || accessLevel !== normalizeAccessLevel(current.perfil)) invalidateUserSessions(id);
+      return res.json({ success: true, user: result.rows[0] });
+    } catch (err: any) {
+      if (String(err?.code) === '23505') return res.status(409).json({ error: 'Este login já está sendo usado nesta empresa.' });
+      return res.status(500).json({ error: err?.message || 'Erro ao atualizar usuário.' });
+    }
+  });
+
+  app.delete('/api/users/:id', requireCompanyOwner, async (req, res) => {
+    try {
+      const companyId = currentCompanyId();
+      const id = String(req.params.id || '').trim();
+      const userResult = await pool.query('SELECT perfil FROM avaliacao_usuarios WHERE id=$1 AND empresa_id=$2 LIMIT 1', [id, companyId]);
+      const user = userResult.rows[0];
+      if (!user) return res.status(404).json({ error: 'Usuário não encontrado.' });
+      if (normalizeAccessLevel(user.perfil) === 'owner') return res.status(400).json({ error: 'O proprietário principal não pode ser excluído.' });
+      await pool.query('DELETE FROM avaliacao_usuarios WHERE id=$1 AND empresa_id=$2', [id, companyId]);
+      invalidateUserSessions(id);
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Erro ao excluir usuário.' });
+    }
+  });
+
+  app.post('/api/settings/access', requireCompanyOwner, async (req, res) => {
     try {
       const companyId = currentCompanyId();
       const login = String(req.body?.login || '').trim().toLowerCase();
       const password = String(req.body?.password || '').trim();
       if (login.length < 3) return res.status(400).json({ error: 'O login deve ter pelo menos 3 caracteres.' });
-      if (password.length < 4) return res.status(400).json({ error: 'A senha deve ter pelo menos 4 caracteres.' });
+      if (password.length < 6) return res.status(400).json({ error: 'A senha deve ter pelo menos 6 caracteres.' });
       const duplicate = await pool.query('SELECT empresa_id FROM avaliacao_empresas WHERE LOWER(login)=LOWER($1) AND empresa_id<>$2 LIMIT 1', [login, companyId]);
       if (duplicate.rows[0]) return res.status(409).json({ error: 'Este login já está em uso.' });
+      const duplicateUser = await pool.query(
+        `SELECT id FROM avaliacao_usuarios WHERE empresa_id=$1 AND LOWER(login)=LOWER($2) AND id<>$3 LIMIT 1`,
+        [companyId, login, `owner:${companyId}`]
+      );
+      if (duplicateUser.rows[0]) return res.status(409).json({ error: 'Este login já está sendo usado por outro usuário desta empresa.' });
 
       const current = tenantDbs.get(companyId) || await loadCompanyDb(companyId);
       current.settings = { ...current.settings, managerLogin: login } as any;
       tenantDbs.set(companyId, current);
+      const nextHash = hashPassword(password);
       await pool.query(
         `UPDATE avaliacao_empresas
          SET login=$2, senha_hash=$3,
              dados=jsonb_set(COALESCE(dados,'{}'::jsonb), '{settings}', COALESCE(dados->'settings','{}'::jsonb) || $4::jsonb, true),
              atualizado_em=NOW()
          WHERE empresa_id=$1`,
-        [companyId, login, hashPassword(password), JSON.stringify({ managerLogin: login })]
+        [companyId, login, nextHash, JSON.stringify({ managerLogin: login })]
       );
+      const ownerId = `owner:${companyId}`;
+      await pool.query(
+        `UPDATE avaliacao_usuarios SET login=$2, senha_hash=$3, atualizado_em=NOW() WHERE id=$1`,
+        [ownerId, login, nextHash]
+      );
+      invalidateUserSessions(ownerId);
       return res.json({ success: true, login });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Erro ao atualizar login e senha.' });
@@ -1131,8 +1569,10 @@ if (totalEmpresas === 0) {
 
       tenantDbs.set(companyId, db);
 
+      const session = getAuthSession(_req);
       const canManage = sessionCanManageCompany(_req, companyId);
-      const responseSettings: any = canManage ? { ...db.settings } : publicSettingsOnly(db.settings as any);
+      const canViewPrivateSettings = Boolean(canManage && (session?.role === 'superadmin' || normalizeAccessLevel(session?.accessLevel) !== 'viewer'));
+      const responseSettings: any = canViewPrivateSettings ? { ...db.settings } : publicSettingsOnly(db.settings as any);
       return res.json({
         settings: responseSettings,
         rewards: db.rewards,
@@ -1232,7 +1672,7 @@ if (totalEmpresas === 0) {
   });
 
   // Validate / Claim Reward Voucher
-  app.post('/api/reviews/validate', requireCompanyManager, async (req, res) => {
+  app.post('/api/reviews/validate', requireCompanyEditor, async (req, res) => {
     try {
       const { code, tableNumber } = req.body;
       if (!code) {
@@ -1292,7 +1732,7 @@ if (totalEmpresas === 0) {
   });
 
   // Delete Single Review
-  app.delete('/api/reviews/:id', requireCompanyManager, async (req, res) => {
+  app.delete('/api/reviews/:id', requireCompanyEditor, async (req, res) => {
     try {
       const { id } = req.params;
       if (!id) {
@@ -1316,7 +1756,7 @@ if (totalEmpresas === 0) {
   });
 
   // Clear All Reviews
-  app.delete('/api/reviews', requireCompanyManager, async (_req, res) => {
+  app.delete('/api/reviews', requireCompanyEditor, async (_req, res) => {
     try {
       activeDb.reviews = [];
       saveDb(activeDb);
@@ -1329,7 +1769,7 @@ if (totalEmpresas === 0) {
   });
 
   // Update Settings
-  app.post('/api/settings', requireCompanyManager, async (req, res) => {
+  app.post('/api/settings', requireCompanyEditor, async (req, res) => {
     try {
       const companyId = currentCompanyId();
       const incoming = req.body && typeof req.body === 'object' ? req.body : {};
@@ -1385,7 +1825,7 @@ if (totalEmpresas === 0) {
   });
 
   // Dedicated PIN Update Endpoint
-  app.post('/api/settings/pin', requireCompanyManager, (req, res) => {
+  app.post('/api/settings/pin', requireCompanyEditor, (req, res) => {
     try {
       const { pin } = req.body || {};
       if (!pin || typeof pin !== 'string' || pin.trim().length < 3) {
@@ -1402,7 +1842,7 @@ if (totalEmpresas === 0) {
   });
 
   // Dedicated WhatsApp API Settings Update Endpoint
-  app.post('/api/settings/whatsapp', requireCompanyManager, (req, res) => {
+  app.post('/api/settings/whatsapp', requireCompanyEditor, (req, res) => {
     try {
       const { whatsappApiUrl, whatsappApiToken, whatsappCustomMessage, autoSendWhatsApp, autoSendMode } = req.body || {};
       if (whatsappApiUrl !== undefined) {
@@ -1445,7 +1885,7 @@ if (totalEmpresas === 0) {
   });
 
   // Update Rewards
-  app.post('/api/rewards', requireCompanyManager, async (req, res) => {
+  app.post('/api/rewards', requireCompanyEditor, async (req, res) => {
     try {
       if (!Array.isArray(req.body)) {
         return res.status(400).json({ error: 'Lista de brindes inválida.' });
@@ -1469,7 +1909,7 @@ if (totalEmpresas === 0) {
   });
 
   // Update Waiters
-  app.post('/api/waiters', requireCompanyManager, async (req, res) => {
+  app.post('/api/waiters', requireCompanyEditor, async (req, res) => {
     try {
       if (!Array.isArray(req.body)) {
         return res.status(400).json({ error: 'Lista de garçons inválida.' });
@@ -1493,7 +1933,7 @@ if (totalEmpresas === 0) {
   });
 
   // Full Database Sync Push (Saves rewards, waiters, settings, reviews atomically)
-  app.post('/api/sync/push', requireCompanyManager, async (req, res) => {
+  app.post('/api/sync/push', requireCompanyEditor, async (req, res) => {
     const client = await pool.connect();
     try {
       const companyId = currentCompanyId();
@@ -1557,14 +1997,14 @@ if (totalEmpresas === 0) {
   });
 
   // Export full database JSON file
-  app.get('/api/database/export', requireCompanyManager, (_req, res) => {
+  app.get('/api/database/export', requireCompanyOwner, (_req, res) => {
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Content-Disposition', 'attachment; filename="banco_restaurante_backup.json"');
     return res.send(JSON.stringify(activeDb, null, 2));
   });
 
   // Import full database JSON file
-  app.post('/api/database/import', requireCompanyManager, (req, res) => {
+  app.post('/api/database/import', requireCompanyOwner, (req, res) => {
     try {
       const data = req.body;
       if (!data || typeof data !== 'object') {
@@ -2015,7 +2455,7 @@ Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos voc
   }
 
   // Background WhatsApp Send API (Sends without opening WhatsApp on customer's device)
-  app.post('/api/send-whatsapp', requireCompanyManager, async (req, res) => {
+  app.post('/api/send-whatsapp', requireCompanyEditor, async (req, res) => {
     try {
       const {
         phone,
@@ -2071,7 +2511,7 @@ Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos voc
   });
 
   // Trigger expiring notifications endpoint
-  app.post('/api/notifications/expiring', requireCompanyManager, async (req, res) => {
+  app.post('/api/notifications/expiring', requireCompanyEditor, async (req, res) => {
     try {
       const { reviewId, type } = req.body;
       const { sent5DaysCount, sent1DayCount } = await checkAndSendExpiringNotifications(
@@ -2096,7 +2536,7 @@ Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos voc
   });
 
   // Test WhatsApp Gateway endpoint - Sends official voucher preview
-  app.post('/api/test-whatsapp', requireCompanyManager, async (req, res) => {
+  app.post('/api/test-whatsapp', requireCompanyEditor, async (req, res) => {
     try {
       const { phone, apiUrl, apiToken, message } = req.body;
       if (!phone) {
