@@ -73,7 +73,6 @@ export function markWaitersCustomized(): void {
 export function loadSettings(): RestaurantSettings {
   try {
     const raw = localStorage.getItem(tenantKey(SETTINGS_KEY));
-    const savedPin = loadSavedPin();
     const savedWhatsApp = loadWhatsAppConfig();
     let merged: RestaurantSettings = { ...INITIAL_SETTINGS };
     if (raw) {
@@ -81,9 +80,6 @@ export function loadSettings(): RestaurantSettings {
       if (parsed && typeof parsed === 'object') {
         merged = { ...INITIAL_SETTINGS, ...parsed };
       }
-    }
-    if (savedPin) {
-      merged.managerPin = savedPin;
     }
     if (savedWhatsApp?.whatsappApiUrl) {
       merged.whatsappApiUrl = savedWhatsApp.whatsappApiUrl;
@@ -107,6 +103,8 @@ export function loadSettings(): RestaurantSettings {
       merged.whatsappApiToken = INITIAL_SETTINGS.whatsappApiToken;
     }
 
+    // O PIN antigo não participa mais da autenticação e não deve permanecer no cache do navegador.
+    delete (merged as any).managerPin;
     return merged;
   } catch (e) {
     console.error('Error reading settings', e);
@@ -116,10 +114,9 @@ export function loadSettings(): RestaurantSettings {
 
 export function saveSettings(settings: RestaurantSettings): void {
   try {
-    localStorage.setItem(tenantKey(SETTINGS_KEY), JSON.stringify(settings));
-    if (settings.managerPin && settings.managerPin.trim().length > 0) {
-      savePin(settings.managerPin);
-    }
+    const safeSettings: RestaurantSettings = { ...settings };
+    delete (safeSettings as any).managerPin;
+    localStorage.setItem(tenantKey(SETTINGS_KEY), JSON.stringify(safeSettings));
     if (settings.whatsappApiUrl || settings.whatsappApiToken || settings.whatsappCustomMessage) {
       saveWhatsAppConfig({
         whatsappApiUrl: settings.whatsappApiUrl,

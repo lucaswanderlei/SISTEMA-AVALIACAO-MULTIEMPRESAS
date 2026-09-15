@@ -1,11 +1,47 @@
-import { getCompanyId } from './tenant';
+import { getCompanyId, tenantKey } from './tenant';
 import { RestaurantSettings, RewardOption, Review, Waiter } from '../types';
 
 
 function tenantFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   const headers = new Headers(init.headers || {});
   headers.set('X-Company-Id', getCompanyId());
+  try {
+    const token = sessionStorage.getItem(tenantKey('restaurant_manager_token'));
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+  } catch {}
   return fetch(input, { ...init, headers });
+}
+
+export async function apiManagerLogin(login: string, password: string): Promise<{ success: boolean; token?: string; role?: string; error?: string }> {
+  try {
+    const res = await tenantFetch('/api/auth/manager', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login, password }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { success: false, error: data.error || 'Login ou senha inválidos.' };
+    if (data.token) {
+      try { sessionStorage.setItem(tenantKey('restaurant_manager_token'), data.token); } catch {}
+    }
+    return { success: true, token: data.token, role: data.role };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Falha de conexão com o servidor.' };
+  }
+}
+
+export async function apiUpdateAccessCredentials(login: string, password: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await tenantFetch('/api/settings/access', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login, password }),
+    });
+    const data = await res.json().catch(() => ({}));
+    return res.ok ? { success: true } : { success: false, error: data.error || 'Não foi possível atualizar o acesso.' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Falha de conexão com o servidor.' };
+  }
 }
 
 export interface SyncDataResponse {
