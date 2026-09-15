@@ -26,7 +26,7 @@ import {
   X,
 } from 'lucide-react';
 import { Review, RestaurantSettings } from '../types';
-import { apiTriggerExpiringNotifications } from '../lib/api';
+import { apiTriggerExpiringNotifications, tenantFetch } from '../lib/api';
 
 interface CustomerDatabaseViewProps {
   reviews: Review[];
@@ -991,7 +991,7 @@ export const CustomerDatabaseView: React.FC<CustomerDatabaseViewProps> = ({
                                     `⚠️ *Regra Importante:* Só é válido utilizar 1 cortesia/brinde por mesa!\n\n` +
                                     `Apresente este voucher ao garçom no ${settings.name} durante sua próxima visita. Esperamos você! 💛`;
 
-                                  const res = await fetch('/api/send-whatsapp', {
+                                  const res = await tenantFetch('/api/send-whatsapp', {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({

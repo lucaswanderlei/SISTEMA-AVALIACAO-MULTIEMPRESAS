@@ -17,8 +17,6 @@ interface RewardVoucherCardProps {
   createdAt?: string;
   autoSendWhatsApp?: boolean;
   autoSendMode?: 'silent_api' | 'auto_open' | 'open_app';
-  whatsappApiUrl?: string;
-  whatsappApiToken?: string;
 }
 
 export const RewardVoucherCard: React.FC<RewardVoucherCardProps> = ({
@@ -36,14 +34,10 @@ export const RewardVoucherCard: React.FC<RewardVoucherCardProps> = ({
   createdAt,
   autoSendWhatsApp = true,
   autoSendMode = 'silent_api',
-  whatsappApiUrl,
-  whatsappApiToken,
 }) => {
   const [qrCodeUrl, setQrCodeUrl] = useState<string>('');
   const [copied, setCopied] = useState(false);
   const [copiedMessage, setCopiedMessage] = useState(false);
-  const [hasRealGateway, setHasRealGateway] = useState<boolean | null>(null);
-  const [autoSendStatus, setAutoSendStatus] = useState<'idle' | 'sending' | 'delivered' | 'failed'>('idle');
   const hasTriggeredAutoSend = useRef(false);
 
   const createdTime = createdAt ? new Date(createdAt).getTime() : Date.now();
@@ -123,47 +117,12 @@ export const RewardVoucherCard: React.FC<RewardVoucherCardProps> = ({
     return `https://api.whatsapp.com/send?text=${text}`;
   };
 
-  // Trigger silent WhatsApp send via server API
-  const triggerSilentWhatsAppSend = async () => {
-    if (!customerPhone || customerPhone.trim().length < 8) return;
-    setAutoSendStatus('sending');
-    try {
-      const res = await fetch('/api/send-whatsapp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          phone: customerPhone,
-          customerName: customerName || 'Cliente',
-          rewardTitle,
-          rewardCode,
-          restaurantName,
-          availableFrom,
-          expiresAt,
-          apiUrl: whatsappApiUrl,
-          apiToken: whatsappApiToken,
-          templateMode: 'brinde_template',
-        }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setHasRealGateway(Boolean(data.hasRealGateway && data.success));
-        setAutoSendStatus('delivered');
-      } else {
-        setHasRealGateway(false);
-        setAutoSendStatus('delivered');
-      }
-    } catch (err) {
-      console.warn('Silent WhatsApp send fallback:', err);
-      setHasRealGateway(false);
-      setAutoSendStatus('delivered');
-    }
-  };
-
-  // Auto-send WhatsApp on mount
+  // No modo silencioso o envio é feito pelo backend no momento em que a
+  // avaliação é registrada. O navegador público nunca recebe credenciais da API.
   useEffect(() => {
     if (
       autoSendWhatsApp &&
+      autoSendMode === 'auto_open' &&
       customerPhone &&
       customerPhone.trim().length >= 8 &&
       !isClaimed &&
@@ -171,21 +130,14 @@ export const RewardVoucherCard: React.FC<RewardVoucherCardProps> = ({
       !hasTriggeredAutoSend.current
     ) {
       hasTriggeredAutoSend.current = true;
-
-      if (autoSendMode === 'auto_open') {
-        // Automatic direct launch of WhatsApp on the client's screen
-        const timer = setTimeout(() => {
-          try {
-            window.open(getVoucherWhatsAppLink(), '_blank');
-          } catch (e) {
-            console.warn('Could not auto-open window:', e);
-          }
-        }, 1200);
-        return () => clearTimeout(timer);
-      } else {
-        // Silent server-side API dispatch
-        triggerSilentWhatsAppSend();
-      }
+      const timer = setTimeout(() => {
+        try {
+          window.open(getVoucherWhatsAppLink(), '_blank');
+        } catch (e) {
+          console.warn('Could not auto-open window:', e);
+        }
+      }, 1200);
+      return () => clearTimeout(timer);
     }
   }, [customerPhone, isClaimed, isExpired, autoSendWhatsApp, autoSendMode]);
 

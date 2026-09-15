@@ -1077,8 +1077,6 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
             createdAt={generatedReview.createdAt}
             autoSendWhatsApp={settings.autoSendWhatsApp ?? true}
             autoSendMode={settings.autoSendMode ?? 'silent_api'}
-            whatsappApiUrl={settings.whatsappApiUrl}
-            whatsappApiToken={settings.whatsappApiToken}
           />
 
           <div className="text-center pt-4">

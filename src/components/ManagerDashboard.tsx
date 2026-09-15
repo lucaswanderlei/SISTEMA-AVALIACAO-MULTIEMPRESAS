@@ -43,7 +43,7 @@ import {
 } from 'lucide-react';
 import { RestaurantSettings, RewardOption, Review, Waiter } from '../types';
 import { CustomerDatabaseView } from './CustomerDatabaseView';
-import { apiUpdateAccessCredentials } from '../lib/api';
+import { apiUpdateAccessCredentials, tenantFetch } from '../lib/api';
 import { RatingChoiceIcon } from './RatingChoiceIcon';
 import { QUICK_TAGS_OPTIONS } from '../data/mockData';
 import type { RatingIconType } from '../types';
@@ -521,7 +521,7 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
     setTestWhatsAppResult(null);
 
     try {
-      const res = await fetch('/api/test-whatsapp', {
+      const res = await tenantFetch('/api/test-whatsapp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -573,7 +573,7 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
     setTestWhatsAppResult(null);
 
     try {
-      const res = await fetch('/api/test-whatsapp', {
+      const res = await tenantFetch('/api/test-whatsapp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
