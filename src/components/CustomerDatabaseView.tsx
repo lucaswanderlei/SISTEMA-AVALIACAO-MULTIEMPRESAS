@@ -32,9 +32,25 @@ interface CustomerDatabaseViewProps {
   reviews: Review[];
   settings: RestaurantSettings;
   onValidateVoucher: (rewardCode: string) => void;
-  onDeleteCustomer?: (id: string) => void;
+  onDeleteCustomer?: (id: string | string[]) => void;
   onClearAllCustomers?: () => void;
   onUpdateReviews?: (updated: Review[]) => void;
+}
+
+type CustomerGroup = Review & {
+  _customerKey: string;
+  _evaluationCount: number;
+  _evaluations: Review[];
+};
+
+function normalizeCustomerPhone(phone?: string): string {
+  let digits = String(phone || '').replace(/\D/g, '').replace(/^0+/, '');
+  if (digits.startsWith('55') && digits.length >= 12) digits = digits.slice(2).replace(/^0+/, '');
+  // Normaliza celulares brasileiros antigos com 8 dígitos para o padrão com nono dígito.
+  if (digits.length === 10 && /^[6-9]/.test(digits.slice(2))) {
+    digits = `${digits.slice(0, 2)}9${digits.slice(2)}`;
+  }
+  return digits;
 }
 
 export const CustomerDatabaseView: React.FC<CustomerDatabaseViewProps> = ({
@@ -47,10 +63,10 @@ export const CustomerDatabaseView: React.FC<CustomerDatabaseViewProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'expiring_1d' | 'expiring_5d' | 'pending_24h' | 'available' | 'claimed' | 'expired'>('all');
-  const [selectedCustomer, setSelectedCustomer] = useState<Review | null>(null);
+  const [expandedCustomerKey, setExpandedCustomerKey] = useState<string | null>(null);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [showClearConfirmModal, setShowClearConfirmModal] = useState(false);
-  const [customerToDelete, setCustomerToDelete] = useState<Review | null>(null);
+  const [customerToDelete, setCustomerToDelete] = useState<CustomerGroup | null>(null);
   const [sendingApiId, setSendingApiId] = useState<string | null>(null);
   const [sentSuccessId, setSentSuccessId] = useState<string | null>(null);
   const [triggeringExpiring, setTriggeringExpiring] = useState<boolean>(false);
@@ -195,20 +211,46 @@ export const CustomerDatabaseView: React.FC<CustomerDatabaseViewProps> = ({
     return `https://wa.me/${phoneWithDDI}?text=${encodeURIComponent(text)}`;
   };
 
-  // Customers data filtered
+  // CRM agrupado por telefone: um único cadastro por cliente, mantendo todo o histórico de avaliações.
+  const groupedCustomers = useMemo<CustomerGroup[]>(() => {
+    const groups = new Map<string, Review[]>();
+    reviews.forEach((review) => {
+      const normalized = review.customerPhoneNormalized || normalizeCustomerPhone(review.customerPhone);
+      const key = normalized ? `phone:${normalized}` : `review:${review.id}`;
+      const current = groups.get(key) || [];
+      current.push(review);
+      groups.set(key, current);
+    });
+
+    return Array.from(groups.entries())
+      .map(([key, items]) => {
+        const sorted = [...items].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        const latest = sorted[0];
+        const bestName = sorted.find((r) => r.customerName?.trim())?.customerName || latest.customerName;
+        const bestPhone = sorted.find((r) => r.customerPhone?.trim())?.customerPhone || latest.customerPhone;
+        return {
+          ...latest,
+          customerName: bestName,
+          customerPhone: bestPhone,
+          _customerKey: key,
+          _evaluationCount: sorted.length,
+          _evaluations: sorted,
+        } as CustomerGroup;
+      })
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [reviews]);
+
   const filteredCustomers = useMemo(() => {
-    return reviews.filter((r) => {
-      // Must have at least name or phone to be considered registered customer, but we show all review respondents
+    return groupedCustomers.filter((r) => {
       const term = searchTerm.toLowerCase().trim();
       if (term) {
-        const matchesName = r.customerName?.toLowerCase().includes(term);
-        const matchesPhone = r.customerPhone?.toLowerCase().includes(term);
-        const matchesCode = r.rewardCode.toLowerCase().includes(term);
-        const matchesReward = r.rewardTitle.toLowerCase().includes(term);
-        const matchesWaiter = r.waiterName?.toLowerCase().includes(term);
-        if (!matchesName && !matchesPhone && !matchesCode && !matchesReward && !matchesWaiter) {
-          return false;
-        }
+        const matches = r._evaluations.some((ev) => {
+          const fields = [ev.customerName, ev.customerPhone, ev.rewardCode, ev.rewardTitle, ev.waiterName]
+            .filter(Boolean)
+            .map((v) => String(v).toLowerCase());
+          return fields.some((v) => v.includes(term));
+        });
+        if (!matches) return false;
       }
 
       if (statusFilter === 'expiring_1d') {
@@ -224,11 +266,11 @@ export const CustomerDatabaseView: React.FC<CustomerDatabaseViewProps> = ({
 
       return true;
     });
-  }, [reviews, searchTerm, statusFilter, nowMs]);
+  }, [groupedCustomers, searchTerm, statusFilter, nowMs]);
 
   // Key metrics
   const metrics = useMemo(() => {
-    const total = reviews.length;
+    const total = groupedCustomers.length;
     let withPhone = 0;
     let pending24h = 0;
     let available = 0;
@@ -237,8 +279,8 @@ export const CustomerDatabaseView: React.FC<CustomerDatabaseViewProps> = ({
     let expiringIn5Days = 0;
     let expiringIn1Day = 0;
 
-    reviews.forEach((r) => {
-      if (r.customerPhone && r.customerPhone.trim().length >= 8) withPhone++;
+    groupedCustomers.forEach((r) => {
+      if (r.customerPhone && normalizeCustomerPhone(r.customerPhone).length >= 10) withPhone++;
       const st = getCustomerStatus(r);
       if (st === 'pending_24h') pending24h++;
       else if (st === 'available') available++;
@@ -256,7 +298,7 @@ export const CustomerDatabaseView: React.FC<CustomerDatabaseViewProps> = ({
     });
 
     return { total, withPhone, pending24h, available, claimed, expired, expiringIn5Days, expiringIn1Day };
-  }, [reviews, nowMs]);
+  }, [groupedCustomers, nowMs]);
 
   // Export to CSV functionality
   const handleExportCSV = () => {
@@ -804,7 +846,7 @@ export const CustomerDatabaseView: React.FC<CustomerDatabaseViewProps> = ({
         <div className="px-5 py-4 border-b border-stone-100 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <h3 className="font-bold text-stone-900 text-sm">
-              Registros no Banco de Dados ({filteredCustomers.length})
+              Clientes no CRM ({filteredCustomers.length})
             </h3>
             <span className="text-[11px] text-stone-400">
               {statusFilter !== 'all' ? 'Filtrado' : 'Todos os clientes'}
@@ -868,7 +910,7 @@ export const CustomerDatabaseView: React.FC<CustomerDatabaseViewProps> = ({
 
               return (
                 <div
-                  key={cust.id}
+                  key={cust._customerKey}
                   className={`p-4 sm:p-5 transition flex flex-col lg:flex-row lg:items-center justify-between gap-4 ${
                     expInfo
                       ? 'bg-amber-50/40 border-l-4 border-l-amber-500 hover:bg-amber-50/70'
@@ -906,6 +948,9 @@ export const CustomerDatabaseView: React.FC<CustomerDatabaseViewProps> = ({
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-bold text-stone-900 text-sm">
                           {cust.customerName || 'Cliente não identificado'}
+                        </span>
+                        <span className="text-[10px] font-black text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
+                          {cust._evaluationCount} {cust._evaluationCount === 1 ? 'avaliação' : 'avaliações'}
                         </span>
                         {cust.tableNumber && (
                           <span className="text-[11px] font-semibold text-stone-600 bg-stone-100 px-2 py-0.5 rounded-md">
@@ -1025,6 +1070,42 @@ export const CustomerDatabaseView: React.FC<CustomerDatabaseViewProps> = ({
                           </span>
                         )}
                       </div>
+
+                      {cust._evaluationCount > 1 && (
+                        <div className="pt-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedCustomerKey(expandedCustomerKey === cust._customerKey ? null : cust._customerKey)}
+                            className="text-[11px] font-bold text-indigo-700 hover:text-indigo-900 underline"
+                          >
+                            {expandedCustomerKey === cust._customerKey ? 'Ocultar histórico' : `Ver histórico das ${cust._evaluationCount} avaliações`}
+                          </button>
+                          {expandedCustomerKey === cust._customerKey && (
+                            <div className="mt-2 space-y-1.5 rounded-xl border border-indigo-100 bg-indigo-50/40 p-2.5">
+                              {cust._evaluations.map((ev, index) => {
+                                const avg = ((ev.ratings.service + ev.ratings.ambiance + ev.ratings.products + ev.ratings.waitTime) / 4).toFixed(1);
+                                const st = getCustomerStatus(ev);
+                                const statusText = st === 'claimed' ? 'Resgatado' : st === 'available' ? 'Disponível' : st === 'pending_24h' ? 'Aguardando 24h' : 'Expirado';
+                                return (
+                                  <div key={ev.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 text-[10px] bg-white rounded-lg border border-stone-200 px-2.5 py-2">
+                                    <div className="text-stone-600">
+                                      <strong className="text-stone-800">#{cust._evaluationCount - index}</strong> • {new Date(ev.createdAt).toLocaleString('pt-BR')} • Nota {avg}
+                                      {ev.tableNumber ? ` • Mesa ${ev.tableNumber}` : ''}
+                                    </div>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="font-mono text-stone-700">{ev.rewardCode}</span>
+                                      <span className="font-bold text-stone-600">{statusText}</span>
+                                      {!ev.rewardClaimed && st !== 'expired' && (
+                                        <button type="button" onClick={() => onValidateVoucher(ev.rewardCode)} className="font-bold text-emerald-700 underline">Validar</button>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       {/* Prominent WhatsApp expiration notification button when expiring in 1 or 5 days */}
                       {expInfo && (
@@ -1511,7 +1592,7 @@ export const CustomerDatabaseView: React.FC<CustomerDatabaseViewProps> = ({
                 Apagar Registro?
               </h3>
               <p className="text-xs text-stone-500 leading-relaxed">
-                Deseja remover o registro de <strong>{customerToDelete.customerName}</strong> ({customerToDelete.customerPhone || 'Sem telefone'})?
+                Deseja remover o cadastro de <strong>{customerToDelete.customerName}</strong> ({customerToDelete.customerPhone || 'Sem telefone'}) e suas <strong>{customerToDelete._evaluationCount} avaliação(ões)</strong>?
               </p>
             </div>
 
@@ -1526,12 +1607,13 @@ export const CustomerDatabaseView: React.FC<CustomerDatabaseViewProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  const idToDelete = customerToDelete.id;
+                  const idsToDelete = customerToDelete._evaluations.map((ev) => ev.id);
                   if (onUpdateReviews) {
-                    onUpdateReviews(reviews.filter((r) => r.id !== idToDelete));
+                    const idSet = new Set(idsToDelete);
+                    onUpdateReviews(reviews.filter((r) => !idSet.has(r.id)));
                   }
                   if (onDeleteCustomer) {
-                    onDeleteCustomer(idToDelete);
+                    onDeleteCustomer(idsToDelete);
                   }
                   setCustomerToDelete(null);
                 }}

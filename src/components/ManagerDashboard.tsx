@@ -43,7 +43,7 @@ import {
 } from 'lucide-react';
 import { RestaurantSettings, RewardOption, Review, Waiter } from '../types';
 import { CustomerDatabaseView } from './CustomerDatabaseView';
-import { apiUpdatePin } from '../lib/api';
+import { apiUpdateAccessCredentials } from '../lib/api';
 import { RatingChoiceIcon } from './RatingChoiceIcon';
 import { QUICK_TAGS_OPTIONS } from '../data/mockData';
 import type { RatingIconType } from '../types';
@@ -57,7 +57,7 @@ interface ManagerDashboardProps {
   onUpdateRewards: (rewards: RewardOption[]) => void;
   onUpdateSettings: (settings: RestaurantSettings) => void;
   onUpdateWaiters: (waiters: Waiter[]) => void;
-  onDeleteReview?: (id: string) => void;
+  onDeleteReview?: (id: string | string[]) => void;
   onClearAllReviews?: () => void;
   onUpdateReviewsList?: (reviews: Review[]) => void;
   onSaveDatabase?: () => Promise<boolean> | void;
@@ -393,88 +393,46 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
     }
   };
 
-  // PIN / Password management state
-  const [pinFormValue, setPinFormValue] = useState<string>('');
-  const [pinConfirmValue, setPinConfirmValue] = useState<string>('');
-  const [showPinPassword, setShowPinPassword] = useState<boolean>(false);
-  const [showCurrentPinValue, setShowCurrentPinValue] = useState<boolean>(false);
+  // Login / password management state
+  const [accessLogin, setAccessLogin] = useState<string>(settings.managerLogin || '');
+  const [accessPassword, setAccessPassword] = useState<string>('');
+  const [accessPasswordConfirm, setAccessPasswordConfirm] = useState<string>('');
+  const [showAccessPassword, setShowAccessPassword] = useState<boolean>(false);
   const [isSavingPin, setIsSavingPin] = useState<boolean>(false);
   const [pinFeedback, setPinFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const handleSaveNewPin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setPinFeedback(null);
-    const trimmed = pinFormValue.trim();
-    const confirmTrimmed = pinConfirmValue.trim();
+    const login = accessLogin.trim().toLowerCase();
+    const password = accessPassword.trim();
+    const confirm = accessPasswordConfirm.trim();
 
-    if (!trimmed) {
-      setPinFeedback({ type: 'error', message: 'Digite a nova senha desejada.' });
+    if (login.length < 3) {
+      setPinFeedback({ type: 'error', message: 'O login deve ter pelo menos 3 caracteres.' });
       return;
     }
-    if (trimmed.length < 3 || trimmed.length > 12) {
-      setPinFeedback({ type: 'error', message: 'A senha deve conter entre 3 e 12 dígitos ou letras.' });
+    if (password.length < 4) {
+      setPinFeedback({ type: 'error', message: 'A senha deve ter pelo menos 4 caracteres.' });
       return;
     }
-    if (trimmed !== confirmTrimmed) {
-      setPinFeedback({ type: 'error', message: 'A confirmação não confere com a nova senha digitada.' });
+    if (password !== confirm) {
+      setPinFeedback({ type: 'error', message: 'A confirmação não confere com a nova senha.' });
       return;
     }
 
     setIsSavingPin(true);
     try {
-      const updatedSettings = {
-        ...settings,
-        managerPin: trimmed,
-      };
+      const result = await apiUpdateAccessCredentials(login, password);
+      if (!result.success) throw new Error(result.error || 'Erro ao atualizar acesso.');
+      const updatedSettings = { ...settings, managerLogin: login };
       onUpdateSettings(updatedSettings);
-
-      await apiUpdatePin(trimmed);
-      if (onSaveDatabase) {
-        await onSaveDatabase();
-      }
-
-      setPinFormValue('');
-      setPinConfirmValue('');
-      setPinFeedback({
-        type: 'success',
-        message: `✓ Nova senha salva com sucesso no banco de dados permanente! Ela continuará ativa mesmo se a página for recarregada.`,
-      });
-      setTimeout(() => setPinFeedback(null), 6000);
-    } catch {
-      setPinFeedback({
-        type: 'error',
-        message: 'Erro ao salvar a nova senha no servidor. Tente novamente.',
-      });
-    } finally {
-      setIsSavingPin(false);
-    }
-  };
-
-  const handleResetDefaultPin = async () => {
-    if (!window.confirm('Deseja restaurar a senha padrão de acesso para "1234"?')) return;
-    setIsSavingPin(true);
-    try {
-      const updatedSettings = {
-        ...settings,
-        managerPin: '1234',
-      };
-      onUpdateSettings(updatedSettings);
-      await apiUpdatePin('1234');
-      if (onSaveDatabase) {
-        await onSaveDatabase();
-      }
-      setPinFormValue('');
-      setPinConfirmValue('');
-      setPinFeedback({
-        type: 'success',
-        message: '✓ Senha padrão (1234) restaurada e salva com sucesso no banco de dados!',
-      });
-      setTimeout(() => setPinFeedback(null), 4000);
-    } catch {
-      setPinFeedback({
-        type: 'error',
-        message: 'Erro ao redefinir a senha.',
-      });
+      setAccessPassword('');
+      setAccessPasswordConfirm('');
+      setPinFeedback({ type: 'success', message: '✓ Login e senha atualizados com sucesso.' });
+      setTimeout(() => setPinFeedback(null), 5000);
+    } catch (err: any) {
+      setPinFeedback({ type: 'error', message: err?.message || 'Erro ao salvar o novo acesso.' });
     } finally {
       setIsSavingPin(false);
     }
@@ -3372,138 +3330,37 @@ return (
 
           {/* Security & Access Protection Card */}
           <div className="p-5 sm:p-6 bg-white rounded-3xl border border-stone-200 shadow-sm space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <span className="p-2.5 bg-rose-100 text-rose-700 rounded-2xl shadow-xs">
-                  <KeyRound className="w-5 h-5" />
-                </span>
-                <div>
-                  <h3 className="font-extrabold text-stone-900 text-base flex items-center gap-2">
-                    <span>Segurança e Senha de Acesso do Painel</span>
-                    <span className="text-[10px] uppercase font-black tracking-wider px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-                      Protegido
-                    </span>
-                  </h3>
-                  <p className="text-xs text-stone-500">
-                    Define a senha necessária para desbloquear o Painel da Gerência e as Placas QR.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <div className="px-3 py-1.5 bg-stone-100 rounded-xl border border-stone-200 text-xs font-mono font-bold text-stone-700 flex items-center gap-2">
-                  <span className="text-[10px] text-stone-400 font-sans font-semibold">Senha Atual:</span>
-                  <span>{showCurrentPinValue ? (settings.managerPin || '1234') : '••••'}</span>
-                  <button
-                    type="button"
-                    onClick={() => setShowCurrentPinValue(!showCurrentPinValue)}
-                    className="p-1 hover:text-stone-900 text-stone-400 transition cursor-pointer"
-                    title={showCurrentPinValue ? 'Ocultar senha atual' : 'Mostrar senha atual'}
-                  >
-                    {showCurrentPinValue ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                  </button>
-                </div>
+            <div className="flex items-center gap-2.5">
+              <span className="p-2.5 bg-rose-100 text-rose-700 rounded-2xl"><KeyRound className="w-5 h-5" /></span>
+              <div>
+                <h3 className="font-extrabold text-stone-900 text-base">Login e Senha de Acesso do Painel</h3>
+                <p className="text-xs text-stone-500">Credenciais exclusivas desta empresa. O SuperAdmin continua podendo entrar com a credencial mestre.</p>
               </div>
             </div>
 
-            {/* Change Password Form */}
             <form onSubmit={handleSaveNewPin} className="p-4 sm:p-5 bg-stone-50/80 rounded-2xl border border-stone-200 space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-stone-800 mb-1">
-                    Nova Senha de Acesso
-                  </label>
+                  <label className="block text-xs font-bold text-stone-800 mb-1">Login da empresa</label>
+                  <input value={accessLogin} onChange={(e)=>{setAccessLogin(e.target.value); if(pinFeedback)setPinFeedback(null);}} placeholder="ex: srcoxita" className="w-full text-sm font-bold p-3 rounded-xl border border-stone-300 bg-white focus:border-rose-500 outline-none" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-stone-800 mb-1">Nova senha</label>
                   <div className="relative">
-                    <input
-                      type={showPinPassword ? 'text' : 'password'}
-                      value={pinFormValue}
-                      onChange={(e) => {
-                        setPinFormValue(e.target.value);
-                        if (pinFeedback) setPinFeedback(null);
-                      }}
-                      maxLength={12}
-                      placeholder="Ex: 4892 ou senha2026"
-                      className="w-full text-sm font-mono font-bold p-3 pr-10 rounded-xl border border-stone-300 bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-200 outline-none transition"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPinPassword(!showPinPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600 cursor-pointer"
-                      tabIndex={-1}
-                    >
-                      {showPinPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
+                    <input type={showAccessPassword ? 'text' : 'password'} value={accessPassword} onChange={(e)=>{setAccessPassword(e.target.value); if(pinFeedback)setPinFeedback(null);}} placeholder="Mínimo 4 caracteres" className="w-full text-sm font-bold p-3 pr-10 rounded-xl border border-stone-300 bg-white focus:border-rose-500 outline-none" />
+                    <button type="button" onClick={()=>setShowAccessPassword(v=>!v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400">{showAccessPassword ? <EyeOff className="w-4 h-4"/> : <Eye className="w-4 h-4"/>}</button>
                   </div>
-                  <p className="text-[11px] text-stone-400 mt-1">
-                    Mínimo de 3 dígitos ou letras.
-                  </p>
                 </div>
-
                 <div>
-                  <label className="block text-xs font-bold text-stone-800 mb-1">
-                    Confirmar Nova Senha
-                  </label>
-                  <input
-                    type={showPinPassword ? 'text' : 'password'}
-                    value={pinConfirmValue}
-                    onChange={(e) => {
-                      setPinConfirmValue(e.target.value);
-                      if (pinFeedback) setPinFeedback(null);
-                    }}
-                    maxLength={12}
-                    placeholder="Repita a nova senha"
-                    className="w-full text-sm font-mono font-bold p-3 rounded-xl border border-stone-300 bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-200 outline-none transition"
-                  />
-                  <p className="text-[11px] text-stone-400 mt-1">
-                    Digite exatamente a mesma senha.
-                  </p>
+                  <label className="block text-xs font-bold text-stone-800 mb-1">Confirmar senha</label>
+                  <input type={showAccessPassword ? 'text' : 'password'} value={accessPasswordConfirm} onChange={(e)=>{setAccessPasswordConfirm(e.target.value); if(pinFeedback)setPinFeedback(null);}} placeholder="Repita a senha" className="w-full text-sm font-bold p-3 rounded-xl border border-stone-300 bg-white focus:border-rose-500 outline-none" />
                 </div>
               </div>
 
-              {/* Feedback messages */}
-              {pinFeedback && (
-                <div
-                  className={`p-3 rounded-xl text-xs font-bold flex items-center gap-2 ${
-                    pinFeedback.type === 'success'
-                      ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                      : 'bg-rose-50 text-rose-800 border border-rose-200'
-                  }`}
-                >
-                  {pinFeedback.type === 'success' ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  ) : (
-                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-                  )}
-                  <span>{pinFeedback.message}</span>
-                </div>
-              )}
+              {pinFeedback && <div className={`p-3 rounded-xl text-xs font-bold flex items-center gap-2 ${pinFeedback.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'}`}>{pinFeedback.type === 'success' ? <CheckCircle2 className="w-4 h-4"/> : <AlertTriangle className="w-4 h-4"/>}<span>{pinFeedback.message}</span></div>}
 
-              {/* Action Buttons */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
-                <button
-                  type="button"
-                  onClick={handleResetDefaultPin}
-                  disabled={isSavingPin}
-                  className="text-xs text-stone-500 hover:text-stone-700 underline font-medium cursor-pointer self-start sm:self-auto"
-                >
-                  Restaurar Senha Padrão (1234)
-                </button>
-
-                <button
-                  type="submit"
-                  disabled={isSavingPin || !pinFormValue}
-                  className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition shadow-md shadow-rose-200 flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <Lock className="w-4 h-4" />
-                  <span>{isSavingPin ? 'Salvando no Banco...' : 'Salvar Nova Senha no Banco de Dados'}</span>
-                </button>
-              </div>
-
-              <div className="flex items-start gap-2 text-[11px] text-emerald-800 bg-emerald-50/80 p-2.5 rounded-xl border border-emerald-200/80 mt-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                <span>
-                  <strong>Persistência Garantida:</strong> A nova senha é gravada permanentemente no arquivo do servidor e sincronizada. Mesmo se você recarregar a página, fechar a aba ou reiniciar, a sua nova senha permanecerá ativa.
-                </span>
+              <div className="flex justify-end">
+                <button type="submit" disabled={isSavingPin || !accessLogin || !accessPassword || !accessPasswordConfirm} className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-2"><Lock className="w-4 h-4"/><span>{isSavingPin ? 'Salvando...' : 'Salvar Login e Senha'}</span></button>
               </div>
             </form>
           </div>
