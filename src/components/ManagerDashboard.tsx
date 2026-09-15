@@ -40,12 +40,15 @@ import {
   Lightbulb,
   Printer,
   CalendarRange,
+  ShieldCheck,
+  UserX,
+  RefreshCw,
 } from 'lucide-react';
 import { RestaurantSettings, RewardOption, Review, Waiter } from '../types';
 import { CustomerDatabaseView } from './CustomerDatabaseView';
 import { UserAccessManager } from './UserAccessManager';
 import { apiUpdateAccessCredentials, tenantFetch } from '../lib/api';
-import { tenantKey } from '../lib/tenant';
+import { tenantKey, withCompanyParam } from '../lib/tenant';
 import { RatingChoiceIcon } from './RatingChoiceIcon';
 import { QUICK_TAGS_OPTIONS } from '../data/mockData';
 import type { RatingIconType } from '../types';
@@ -87,6 +90,28 @@ const renderVoucherPreview = (template: string, settings: RestaurantSettings) =>
     .replace(/{{\s*inicio\s*}}/gi, 'amanhã')
     .replace(/{{\s*expira\s*}}/gi, `em ${settings.rewardValidityDays || 15} dias`)
     .replace(/{{\s*validade_dias\s*}}/gi, String(settings.rewardValidityDays || 15));
+
+interface PrivacyRequestItem {
+  id: string;
+  type: 'access' | 'correction' | 'deletion' | 'marketing_revocation';
+  name?: string;
+  phone: string;
+  email?: string;
+  message?: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'rejected';
+  createdAt: string;
+  updatedAt?: string;
+  completedAt?: string;
+  internalNote?: string;
+  result?: string;
+}
+
+const privacyTypeLabel: Record<PrivacyRequestItem['type'], string> = {
+  access: 'Acesso aos dados',
+  correction: 'Correção de dados',
+  deletion: 'Exclusão / anonimização',
+  marketing_revocation: 'Parar comunicações promocionais',
+};
 
 export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
   reviews,
@@ -463,6 +488,97 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
       setBackupFeedback({ type: 'error', message: err?.message || 'Arquivo de backup inválido.' });
     } finally {
       setDataExportBusy(null);
+    }
+  };
+
+  // Privacidade / LGPD
+  const [privacyRequests, setPrivacyRequests] = useState<PrivacyRequestItem[]>([]);
+  const [privacyBusy, setPrivacyBusy] = useState<string | null>(null);
+  const [privacyFeedback, setPrivacyFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const loadPrivacyRequests = async () => {
+    if (isViewer) return;
+    try {
+      const res = await tenantFetch('/api/privacy/requests', { cache: 'no-store' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'Não foi possível carregar solicitações.');
+      setPrivacyRequests(body.requests || []);
+    } catch (err: any) {
+      setPrivacyFeedback({ type: 'error', message: err?.message || 'Falha ao carregar solicitações de privacidade.' });
+    }
+  };
+
+  useEffect(() => {
+    if (!isViewer && activeTab === 'settings') void loadPrivacyRequests();
+  }, [activeTab, isViewer]);
+
+  const updatePrivacyRequest = async (id: string, status: PrivacyRequestItem['status']) => {
+    setPrivacyBusy(id);
+    setPrivacyFeedback(null);
+    try {
+      const res = await tenantFetch(`/api/privacy/requests/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'Não foi possível atualizar a solicitação.');
+      setPrivacyRequests((current) => current.map((item) => item.id === id ? body.request : item));
+      setPrivacyFeedback({ type: 'success', message: 'Solicitação atualizada.' });
+    } catch (err: any) {
+      setPrivacyFeedback({ type: 'error', message: err?.message || 'Falha ao atualizar solicitação.' });
+    } finally {
+      setPrivacyBusy(null);
+    }
+  };
+
+  const anonymizePrivacyRequest = async (item: PrivacyRequestItem) => {
+    if (!isOwner) return;
+    if (!window.confirm(`Confirma a anonimização dos dados pessoais vinculados ao telefone ${item.phone}? Esta ação é irreversível no banco atual.`)) return;
+    setPrivacyBusy(item.id);
+    setPrivacyFeedback(null);
+    try {
+      const res = await tenantFetch(`/api/privacy/requests/${encodeURIComponent(item.id)}/anonymize`, { method: 'POST' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'Não foi possível anonimizar os dados.');
+      setPrivacyRequests((current) => current.map((row) => row.id === item.id ? body.request : row));
+      if (Array.isArray(body.reviews)) onUpdateReviewsList?.(body.reviews);
+      setPrivacyFeedback({ type: 'success', message: `${body.affected || 0} avaliação(ões) tiveram os dados pessoais anonimizados.` });
+    } catch (err: any) {
+      setPrivacyFeedback({ type: 'error', message: err?.message || 'Falha ao anonimizar os dados.' });
+    } finally {
+      setPrivacyBusy(null);
+    }
+  };
+
+  const exportPrivacyRequestData = async (item: PrivacyRequestItem) => {
+    setPrivacyBusy(item.id);
+    setPrivacyFeedback(null);
+    try {
+      await downloadTenantFile(`/api/privacy/requests/${encodeURIComponent(item.id)}/export`, `dados_cliente_${item.id.slice(-8)}.json`);
+      setPrivacyFeedback({ type: 'success', message: 'Arquivo de acesso aos dados gerado. Confirme a identidade do solicitante antes de compartilhar.' });
+    } catch (err: any) {
+      setPrivacyFeedback({ type: 'error', message: err?.message || 'Falha ao gerar os dados do cliente.' });
+    } finally {
+      setPrivacyBusy(null);
+    }
+  };
+
+  const revokeMarketingPrivacyRequest = async (item: PrivacyRequestItem) => {
+    if (!window.confirm(`Confirma a interrupção das comunicações promocionais para o telefone ${item.phone}?`)) return;
+    setPrivacyBusy(item.id);
+    setPrivacyFeedback(null);
+    try {
+      const res = await tenantFetch(`/api/privacy/requests/${encodeURIComponent(item.id)}/revoke-marketing`, { method: 'POST' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'Não foi possível revogar as comunicações promocionais.');
+      setPrivacyRequests((current) => current.map((row) => row.id === item.id ? body.request : row));
+      if (Array.isArray(body.reviews)) onUpdateReviewsList?.(body.reviews);
+      setPrivacyFeedback({ type: 'success', message: `Comunicações promocionais revogadas em ${body.affected || 0} registro(s).` });
+    } catch (err: any) {
+      setPrivacyFeedback({ type: 'error', message: err?.message || 'Falha ao revogar comunicações promocionais.' });
+    } finally {
+      setPrivacyBusy(null);
     }
   };
 
@@ -3415,6 +3531,88 @@ return (
                   )}
                 </div>
               </div>
+          </div>
+
+          {/* Privacidade & LGPD */}
+          <div className="p-5 sm:p-6 bg-white rounded-3xl border border-stone-200 shadow-sm space-y-5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <span className="p-2.5 bg-emerald-100 text-emerald-700 rounded-2xl"><ShieldCheck className="w-5 h-5" /></span>
+                <div>
+                  <h3 className="font-extrabold text-stone-900 text-base">Privacidade & LGPD</h3>
+                  <p className="text-xs text-stone-500">Configura o aviso exibido ao cliente e acompanha solicitações de dados.</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => void loadPrivacyRequests()} className="p-2 rounded-xl border border-stone-200 text-stone-500 hover:bg-stone-50" title="Atualizar solicitações"><RefreshCw className="w-4 h-4" /></button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <label className="text-xs font-bold text-stone-700">Razão social / responsável pelos dados
+                <input value={settings.legalName || ''} onChange={(e) => onUpdateSettings({ ...settings, legalName: e.target.value })} placeholder={settings.name || 'Nome da empresa'} className="mt-1 w-full p-3 rounded-xl border border-stone-300 bg-white text-sm font-medium" />
+              </label>
+              <label className="text-xs font-bold text-stone-700">E-mail de privacidade
+                <input type="email" value={settings.privacyContactEmail || ''} onChange={(e) => onUpdateSettings({ ...settings, privacyContactEmail: e.target.value })} placeholder="privacidade@empresa.com.br" className="mt-1 w-full p-3 rounded-xl border border-stone-300 bg-white text-sm" />
+              </label>
+              <label className="text-xs font-bold text-stone-700">Telefone de contato (opcional)
+                <input value={settings.privacyContactPhone || ''} onChange={(e) => onUpdateSettings({ ...settings, privacyContactPhone: e.target.value })} placeholder="(82) 99999-9999" className="mt-1 w-full p-3 rounded-xl border border-stone-300 bg-white text-sm" />
+              </label>
+              <div className="space-y-2">
+                <label className="flex items-start gap-2.5 p-3 rounded-xl bg-stone-50 border border-stone-200 cursor-pointer text-xs text-stone-700">
+                  <input type="checkbox" checked={settings.privacyNoticeRequired !== false} onChange={(e) => onUpdateSettings({ ...settings, privacyNoticeRequired: e.target.checked })} className="mt-0.5 w-4 h-4 accent-emerald-600" />
+                  <span><strong>Exigir ciência do Aviso de Privacidade</strong><br/><span className="text-stone-500">Bloqueia o envio até o cliente confirmar a leitura.</span></span>
+                </label>
+                <label className="flex items-start gap-2.5 p-3 rounded-xl bg-stone-50 border border-stone-200 cursor-pointer text-xs text-stone-700">
+                  <input type="checkbox" checked={settings.marketingOptInEnabled !== false} onChange={(e) => onUpdateSettings({ ...settings, marketingOptInEnabled: e.target.checked })} className="mt-0.5 w-4 h-4 accent-emerald-600" />
+                  <span><strong>Permitir opt-in promocional separado</strong><br/><span className="text-stone-500">A caixa de ofertas é opcional e não interfere no voucher.</span></span>
+                </label>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <a href={withCompanyParam('/privacidade')} target="_blank" rel="noreferrer" className="px-3 py-2 rounded-xl bg-stone-900 text-white text-xs font-black inline-flex items-center gap-2"><FileText className="w-4 h-4" />Ver Aviso de Privacidade</a>
+              <a href={withCompanyParam('/termos')} target="_blank" rel="noreferrer" className="px-3 py-2 rounded-xl border border-stone-300 text-stone-700 text-xs font-black inline-flex items-center gap-2"><FileText className="w-4 h-4" />Ver Termos</a>
+            </div>
+
+            <div className="border-t border-stone-200 pt-4 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-sm font-black text-stone-900">Solicitações dos clientes</h4>
+                  <p className="text-[11px] text-stone-500">Pedidos públicos não apagam dados automaticamente. Confirme a identidade do solicitante antes de ações irreversíveis.</p>
+                </div>
+                <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 text-[10px] font-black">{privacyRequests.filter((r) => r.status === 'pending' || r.status === 'in_progress').length} abertas</span>
+              </div>
+
+              {privacyFeedback && <div className={`p-3 rounded-xl text-xs font-bold ${privacyFeedback.type === 'success' ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' : 'bg-rose-50 border border-rose-200 text-rose-800'}`}>{privacyFeedback.message}</div>}
+
+              {privacyRequests.length === 0 ? (
+                <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 text-xs text-stone-500">Nenhuma solicitação registrada.</div>
+              ) : (
+                <div className="space-y-3 max-h-[460px] overflow-y-auto pr-1">
+                  {privacyRequests.map((item) => (
+                    <div key={item.id} className="p-4 rounded-2xl border border-stone-200 bg-stone-50/70 space-y-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <div className="font-black text-stone-900 text-sm">{privacyTypeLabel[item.type]}</div>
+                          <div className="text-[11px] text-stone-500">{item.name || 'Cliente'} • {item.phone}{item.email ? ` • ${item.email}` : ''}</div>
+                          <div className="text-[10px] text-stone-400 mt-0.5">Protocolo {item.id} • {new Date(item.createdAt).toLocaleString('pt-BR')}</div>
+                        </div>
+                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-black ${item.status === 'completed' ? 'bg-emerald-100 text-emerald-800' : item.status === 'rejected' ? 'bg-rose-100 text-rose-800' : item.status === 'in_progress' ? 'bg-sky-100 text-sky-800' : 'bg-amber-100 text-amber-800'}`}>{item.status === 'pending' ? 'Pendente' : item.status === 'in_progress' ? 'Em análise' : item.status === 'completed' ? 'Concluída' : 'Rejeitada'}</span>
+                      </div>
+                      {item.message && <div className="text-xs text-stone-600 bg-white border border-stone-200 rounded-xl p-3">{item.message}</div>}
+                      {item.result && <div className="text-[11px] font-bold text-emerald-800">{item.result}</div>}
+                      <div className="flex flex-wrap gap-2">
+                        {item.status !== 'completed' && item.status !== 'rejected' && <button disabled={privacyBusy === item.id} onClick={() => void updatePrivacyRequest(item.id, 'in_progress')} className="px-3 py-2 rounded-xl border border-sky-200 bg-sky-50 text-sky-800 text-[11px] font-black disabled:opacity-50">Marcar em análise</button>}
+                        {item.type === 'access' && <button disabled={privacyBusy === item.id} onClick={() => void exportPrivacyRequestData(item)} className="px-3 py-2 rounded-xl border border-violet-200 bg-violet-50 text-violet-800 text-[11px] font-black disabled:opacity-50 inline-flex items-center gap-1.5"><Download className="w-3.5 h-3.5" />Baixar dados</button>}
+                        {item.type === 'marketing_revocation' && item.status !== 'completed' && <button disabled={privacyBusy === item.id} onClick={() => void revokeMarketingPrivacyRequest(item)} className="px-3 py-2 rounded-xl border border-amber-200 bg-amber-50 text-amber-900 text-[11px] font-black disabled:opacity-50">Revogar comunicações</button>}
+                        {item.type !== 'deletion' && item.type !== 'marketing_revocation' && item.status !== 'completed' && <button disabled={privacyBusy === item.id} onClick={() => void updatePrivacyRequest(item.id, 'completed')} className="px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-800 text-[11px] font-black disabled:opacity-50">Concluir manualmente</button>}
+                        {item.type === 'deletion' && isOwner && item.status !== 'completed' && <button disabled={privacyBusy === item.id} onClick={() => void anonymizePrivacyRequest(item)} className="px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-black disabled:opacity-50 inline-flex items-center gap-1.5"><UserX className="w-3.5 h-3.5" />Anonimizar dados</button>}
+                        {item.status !== 'completed' && item.status !== 'rejected' && <button disabled={privacyBusy === item.id} onClick={() => void updatePrivacyRequest(item.id, 'rejected')} className="px-3 py-2 rounded-xl border border-stone-300 text-stone-600 text-[11px] font-black disabled:opacity-50">Rejeitar</button>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Backup & Exportação */}

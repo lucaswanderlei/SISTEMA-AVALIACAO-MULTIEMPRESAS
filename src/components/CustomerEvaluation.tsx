@@ -1,4 +1,4 @@
-import { tenantKey } from '../lib/tenant';
+import { tenantKey, withCompanyParam } from '../lib/tenant';
 import React, { useState, useEffect } from 'react';
 import {
   Users,
@@ -40,6 +40,8 @@ interface CustomerEvaluationProps {
   waiters?: Waiter[];
   onSubmitReview: (review: Review) => void;
 }
+
+const PRIVACY_NOTICE_VERSION = '2026-09-v1';
 
 export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
   tableNumber,
@@ -117,6 +119,8 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
+  const [marketingConsent, setMarketingConsent] = useState(false);
 
   // Optional Waiter Evaluation State
   const [selectedWaiterId, setSelectedWaiterId] = useState<string>('');
@@ -237,7 +241,15 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
       return;
     }
 
-    // 4. Validate Daily Limit: Only 1 evaluation per day per customer/phone
+    // 4. Confirm that the privacy notice was presented/read when required.
+    if (settings.privacyNoticeRequired !== false && !privacyAcknowledged) {
+      setValidationError('Para continuar, confirme que leu o Aviso de Privacidade. O recebimento de ofertas é opcional e separado.');
+      const privacyEl = document.getElementById('privacy-consent-card');
+      if (privacyEl) privacyEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+
+    // 5. Validate Daily Limit: Only 1 evaluation per day per customer/phone
     const todayStr = new Date().toISOString().slice(0, 10);
     const allReviews = loadReviews();
     const reviewFoundToday = allReviews.find((r) => {
@@ -321,6 +333,10 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
       expiresAt,
       whatsappStatus: 'sent_silently',
       whatsappSentAt: now.toISOString(),
+      privacyAcceptedAt: privacyAcknowledged ? now.toISOString() : undefined,
+      privacyNoticeVersion: privacyAcknowledged ? PRIVACY_NOTICE_VERSION : undefined,
+      marketingConsent: Boolean(settings.marketingOptInEnabled !== false && marketingConsent),
+      marketingConsentAt: settings.marketingOptInEnabled !== false && marketingConsent ? now.toISOString() : undefined,
       createdAt: now.toISOString(),
     };
 
@@ -348,6 +364,8 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
     setSuggestion('');
     setCustomerName('');
     setCustomerPhone('');
+    setPrivacyAcknowledged(false);
+    setMarketingConsent(false);
     setSelectedWaiterId('');
     setWaiterRating(0);
     setWaiterCompliments([]);
@@ -994,18 +1012,30 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
               </div>
             </div>
 
-            <div className="bg-stone-50/80 rounded-2xl p-3.5 border border-stone-200/80 space-y-1.5 text-xs text-stone-600">
-              <div className="flex items-center gap-2">
-                <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span className="text-stone-600 font-medium">
-                  Seus dados são protegidos e usados com carinho para liberar seu voucher exclusivo.
+            <div id="privacy-consent-card" className="bg-stone-50/80 rounded-2xl p-3.5 border border-stone-200/80 space-y-3 text-xs text-stone-600">
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={privacyAcknowledged}
+                  onChange={(e) => { setPrivacyAcknowledged(e.target.checked); if (validationError) setValidationError(null); }}
+                  className="mt-0.5 w-4 h-4 accent-rose-600"
+                />
+                <span className="leading-relaxed">
+                  {settings.privacyNoticeRequired !== false ? <strong>Obrigatório: </strong> : null}
+                  Li o <a href={withCompanyParam('/privacidade')} target="_blank" rel="noreferrer" className="font-black text-rose-700 underline">Aviso de Privacidade</a> e estou ciente do uso dos meus dados para registrar a avaliação e administrar meu voucher.
                 </span>
-              </div>
-              <div className="flex items-center gap-2 text-stone-400 text-[11px] pt-1 border-t border-stone-200/60">
-                <Tag className="w-3.5 h-3.5 text-stone-400 shrink-0" />
-                <span>
-                  Válido 1 brinde cortesia por mesa • Liberado após 24h para sua próxima visita
-                </span>
+              </label>
+
+              {settings.marketingOptInEnabled !== false && (
+                <label className="flex items-start gap-2.5 cursor-pointer pt-2 border-t border-stone-200/70">
+                  <input type="checkbox" checked={marketingConsent} onChange={(e) => setMarketingConsent(e.target.checked)} className="mt-0.5 w-4 h-4 accent-emerald-600" />
+                  <span className="leading-relaxed"><strong>Opcional:</strong> quero receber novidades, ofertas e campanhas desta empresa pelo WhatsApp. Posso pedir para parar a qualquer momento.</span>
+                </label>
+              )}
+
+              <div className="flex items-center justify-between gap-2 text-stone-400 text-[11px] pt-2 border-t border-stone-200/60">
+                <span className="flex items-center gap-1.5"><Tag className="w-3.5 h-3.5 shrink-0" />1 brinde por mesa • regras no voucher</span>
+                <a href={withCompanyParam('/termos')} target="_blank" rel="noreferrer" className="font-bold text-stone-600 underline">Ver termos</a>
               </div>
             </div>
           </div>
