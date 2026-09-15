@@ -288,6 +288,9 @@ export default function App() {
   // 2. Real-time background sync polling (every 3.5s)
   // Ensures manager dashboard and customer QR code reviews are 100% synchronized across all devices
   useEffect(() => {
+    // Avaliações e CRM são dados privados: só a gerência autenticada faz polling.
+    if (!isManagerLoggedIn) return;
+
     const interval = setInterval(async () => {
       try {
         const serverReviews = await apiFetchReviews();
@@ -344,7 +347,7 @@ export default function App() {
     }, 3500);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [isManagerLoggedIn]);
 
   // Request manager access: company credentials or SuperAdmin master credentials.
   const handleRequestManagerAccess = (targetView: 'manager' | 'qr_display' = 'manager') => {
@@ -384,6 +387,19 @@ export default function App() {
       setPinInput('');
       setPinError('');
       showToast(result.role === 'superadmin' ? 'Acesso mestre autorizado.' : 'Acesso autorizado ao painel do restaurante.');
+
+      // Carrega os dados privados somente depois que a sessão foi autenticada.
+      try {
+        const privateReviews = await apiFetchReviews();
+        if (privateReviews) {
+          const ordered = privateReviews
+            .filter((r) => !deletedReviewIdsRef.current.has(r.id))
+            .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          setReviews(ordered);
+          saveReviews(ordered);
+          ordered.forEach((r) => knownReviewIdsRef.current.add(r.id));
+        }
+      } catch {}
 
       // A empresa suspensa/vencida bloqueia APIs para a gerência comum, mas o
       // SuperAdmin pode entrar. Recarregar aqui faz o boot repetir a sincronização
@@ -498,7 +514,6 @@ export default function App() {
     } catch (err) {
       console.warn('Central server sync notice:', err);
     }
-    apiSyncPush({ reviews: updated }).catch(() => {});
 
     showToast(
       newReview.tableNumber
