@@ -1050,7 +1050,7 @@ if (totalEmpresas === 0) {
     // These routes need to identify the tenant but must remain reachable even
     // when the subscription is suspended/expired. This is necessary so the UI
     // can show the correct message and so the SuperAdmin can still authenticate.
-    if (req.path === '/api/company/status' || req.path === '/api/auth/manager' || req.path === '/api/auth/forgot-password' || req.path === '/api/auth/reset-password') {
+    if (req.path === '/api/company/status' || req.path === '/api/auth/portal-login' || req.path === '/api/auth/manager' || req.path === '/api/auth/forgot-password' || req.path === '/api/auth/reset-password') {
       return tenantContext.run({ companyId }, next);
     }
 
@@ -1666,6 +1666,86 @@ if (totalEmpresas === 0) {
       });
     } catch (err: any) {
       return res.status(500).json({ accessible: false, code: 'STATUS_ERROR', message: err?.message || 'Erro ao consultar empresa.' });
+    }
+  });
+
+  // Portal geral de acesso. Permite que o site comercial aponte apenas para
+  // app.avaliaeganha.com.br, sem precisar conhecer o slug da empresa.
+  // O login é procurado globalmente, mas a sessão gerada continua vinculada a
+  // uma única empresa e todas as rotas privadas mantêm o isolamento por tenant.
+  app.post('/api/auth/portal-login', async (req, res) => {
+    try {
+      const login = String(req.body?.login || '').trim().toLowerCase();
+      const password = String(req.body?.password || '');
+      if (!login || !password) return res.status(400).json({ error: 'Informe login e senha.' });
+
+      const loginRateKey = rateLimitKey(req, 'portal-login', login);
+      const loginLimit = consumeRateLimit(loginRateKey, 10, 15 * 60 * 1000);
+      if (!loginLimit.allowed) {
+        res.setHeader('Retry-After', String(loginLimit.retryAfterSeconds));
+        return res.status(429).json({ error: 'Muitas tentativas de login. Aguarde alguns minutos e tente novamente.' });
+      }
+
+      if (superAdminCredentialsMatch(login, password)) {
+        clearRateLimit(loginRateKey);
+        const token = createAuthSession({ role: 'superadmin' });
+        return res.json({ success: true, token, role: 'superadmin', redirect: '/super-admin' });
+      }
+
+      const result = await pool.query(
+        `SELECT u.id, u.empresa_id, u.nome, u.login, u.senha_hash, u.perfil, u.ativo
+         FROM avaliacao_usuarios u
+         WHERE LOWER(u.login)=LOWER($1) AND u.ativo=TRUE`,
+        [login]
+      );
+
+      const matches = result.rows.filter((user: any) =>
+        safeEqualText(login, String(user.login || '').trim().toLowerCase()) &&
+        verifyPassword(password, user.senha_hash)
+      );
+
+      if (matches.length === 0) {
+        return res.status(401).json({ error: 'Login ou senha inválidos.' });
+      }
+      if (matches.length > 1) {
+        return res.status(409).json({
+          error: 'Este login está vinculado a mais de uma empresa. Entre pelo link específico da empresa ou solicite ao administrador a alteração do login.',
+          code: 'AMBIGUOUS_LOGIN',
+        });
+      }
+
+      const user = matches[0];
+      const companyId = normalizeCompanyId(user.empresa_id);
+      const meta = await getCompanyAccessMeta(companyId);
+      if (!meta) return res.status(404).json({ error: 'Empresa não encontrada.', code: 'COMPANY_NOT_FOUND' });
+
+      const block = companyBlock(meta);
+      if (block.blocked) {
+        return res.status(block.httpStatus || 403).json({
+          error: block.message,
+          code: block.code,
+          expiresAt: meta.expiresAt,
+        });
+      }
+
+      const accessLevel = normalizeAccessLevel(user.perfil);
+      clearRateLimit(loginRateKey);
+      const token = createAuthSession({ role: 'manager', companyId, userId: user.id, userName: user.nome, accessLevel });
+      await pool.query('UPDATE avaliacao_usuarios SET ultimo_acesso_em=NOW(), atualizado_em=NOW() WHERE id=$1', [user.id]);
+      return res.json({
+        success: true,
+        token,
+        role: 'manager',
+        companyId,
+        login: user.login,
+        userId: user.id,
+        userName: user.nome,
+        accessLevel,
+        redirect: `/gerencia?empresa=${encodeURIComponent(companyId)}`,
+      });
+    } catch (err: any) {
+      console.error('[Portal login]', err);
+      return res.status(500).json({ error: err?.message || 'Erro ao autenticar.' });
     }
   });
 
