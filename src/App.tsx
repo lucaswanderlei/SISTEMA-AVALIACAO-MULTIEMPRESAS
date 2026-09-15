@@ -81,7 +81,17 @@ export default function App() {
   if (typeof window !== 'undefined' && window.location.pathname.replace(/\/$/, '') === '/super-admin') {
     return <SuperAdmin />;
   }
-  const directManagerRoute = typeof window !== 'undefined' && window.location.pathname.replace(/\/$/, '') === '/gerencia';
+  // Links de QR antigos podem ter sido gerados enquanto o painel estava em /gerencia.
+  // Se houver marcadores de cliente/QR/mesa, o modo cliente SEMPRE tem prioridade.
+  const initialUrlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+  const initialIsCustomerUrl = !!(
+    initialUrlParams?.get('cliente') ||
+    initialUrlParams?.get('origem') === 'qrcode' ||
+    initialUrlParams?.get('mesa')
+  );
+  const directManagerRoute = typeof window !== 'undefined' &&
+    window.location.pathname.replace(/\/$/, '') === '/gerencia' &&
+    !initialIsCustomerUrl;
   const [settings, setSettings] = useState<RestaurantSettings>(loadSettings);
   const [rewards, setRewards] = useState<RewardOption[]>(loadRewards);
   const [reviews, setReviews] = useState<Review[]>(loadReviews);
@@ -130,6 +140,8 @@ export default function App() {
   const [activeView, setActiveView] = useState<'customer' | 'qr_display' | 'manager'>(() => {
     if (typeof window === 'undefined') return 'customer';
     const params = new URLSearchParams(window.location.search);
+    const isClientUrl = !!(params.get('cliente') || params.get('origem') === 'qrcode' || params.get('mesa'));
+    if (isClientUrl) return 'customer';
     return (directManagerRoute || params.get('gerencia') === '1') ? 'manager' : 'customer';
   });
   const [notification, setNotification] = useState<string | null>(null);
@@ -149,7 +161,8 @@ export default function App() {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const isClientUrl = params.get('cliente') || params.get('origem') === 'qrcode';
-      const isManagerUrl = directManagerRoute || params.get('gerencia') === '1';
+      // Cliente tem prioridade até mesmo em URLs antigas como /gerencia?cliente=1&empresa=...
+      const isManagerUrl = !isClientUrl && (directManagerRoute || params.get('gerencia') === '1');
       const mesaParam = params.get('mesa');
 
       if (isManagerUrl && !isClientUrl) {
