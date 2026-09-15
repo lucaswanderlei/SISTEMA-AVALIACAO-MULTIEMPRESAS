@@ -28,6 +28,7 @@ type Company = {
   nome: string;
   slug: string;
   login?: string;
+  recovery_email?: string | null;
   ativo: boolean;
   plano?: SubscriptionPlan;
   status_assinatura?: SubscriptionStatus;
@@ -93,6 +94,7 @@ export function SuperAdmin() {
   const [slug, setSlug] = useState('');
   const [companyLogin, setCompanyLogin] = useState('');
   const [companyPassword, setCompanyPassword] = useState('');
+  const [companyRecoveryEmail, setCompanyRecoveryEmail] = useState('');
   const [showCompanyPassword, setShowCompanyPassword] = useState(false);
   const [companyPlan, setCompanyPlan] = useState<SubscriptionPlan>('pro');
   const [companyStatus, setCompanyStatus] = useState<SubscriptionStatus>('trial');
@@ -104,6 +106,7 @@ export function SuperAdmin() {
   const [editingName, setEditingName] = useState('');
   const [editingLogin, setEditingLogin] = useState('');
   const [editingPassword, setEditingPassword] = useState('');
+  const [editingRecoveryEmail, setEditingRecoveryEmail] = useState('');
   const [editingPlan, setEditingPlan] = useState<SubscriptionPlan>('pro');
   const [editingStatus, setEditingStatus] = useState<SubscriptionStatus>('active');
   const [editingExpiresAt, setEditingExpiresAt] = useState('');
@@ -188,6 +191,7 @@ export function SuperAdmin() {
           slug,
           login: companyLogin,
           password: companyPassword,
+          recoveryEmail: companyRecoveryEmail,
           plan: companyPlan,
           subscriptionStatus: companyStatus,
           expiresAt: inputDateToIso(companyExpiresAt),
@@ -199,6 +203,7 @@ export function SuperAdmin() {
       setSlug('');
       setCompanyLogin('');
       setCompanyPassword('');
+      setCompanyRecoveryEmail('');
       setCompanyPlan('pro');
       setCompanyStatus('trial');
       setCompanyExpiresAt(addDaysToToday(7));
@@ -253,6 +258,7 @@ export function SuperAdmin() {
     setEditingName(company.nome);
     setEditingLogin(company.login || company.empresa_id);
     setEditingPassword('');
+    setEditingRecoveryEmail(company.recovery_email || '');
     setEditingPlan(company.plano || 'pro');
     setEditingStatus(company.status_assinatura || (company.ativo ? 'active' : 'suspended'));
     setEditingExpiresAt(isoToInputDate(company.vencimento_em));
@@ -264,6 +270,7 @@ export function SuperAdmin() {
     setEditingName('');
     setEditingLogin('');
     setEditingPassword('');
+    setEditingRecoveryEmail('');
     setEditingPlan('pro');
     setEditingStatus('active');
     setEditingExpiresAt('');
@@ -284,6 +291,7 @@ export function SuperAdmin() {
           nome: cleanName,
           login: cleanLogin,
           password: editingPassword || undefined,
+          recoveryEmail: editingRecoveryEmail,
           plan: editingPlan,
           subscriptionStatus: editingStatus,
           expiresAt: inputDateToIso(editingExpiresAt),
@@ -420,11 +428,12 @@ export function SuperAdmin() {
             />
             <input required value={companyLogin} onChange={(e) => setCompanyLogin(e.target.value.toLowerCase())} placeholder="Login da empresa" className="border border-stone-300 rounded-xl px-4 py-3" />
             <div className="relative">
-              <input required minLength={4} type={showCompanyPassword ? 'text' : 'password'} value={companyPassword} onChange={(e) => setCompanyPassword(e.target.value)} placeholder="Senha inicial" className="w-full border border-stone-300 rounded-xl px-4 py-3 pr-11" />
+              <input required minLength={6} type={showCompanyPassword ? 'text' : 'password'} value={companyPassword} onChange={(e) => setCompanyPassword(e.target.value)} placeholder="Senha inicial" className="w-full border border-stone-300 rounded-xl px-4 py-3 pr-11" />
               <button type="button" onClick={() => setShowCompanyPassword((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400">
                 {showCompanyPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
+            <input type="email" value={companyRecoveryEmail} onChange={(e) => setCompanyRecoveryEmail(e.target.value)} placeholder="E-mail de recuperação" className="border border-stone-300 rounded-xl px-4 py-3" />
             <select value={companyPlan} onChange={(e) => setCompanyPlan(e.target.value as SubscriptionPlan)} className="border border-stone-300 rounded-xl px-4 py-3 bg-white">
               <option value="basic">Plano Básico</option>
               <option value="pro">Plano Pro</option>
@@ -473,7 +482,8 @@ export function SuperAdmin() {
                     <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-2">
                       <input value={editingName} onChange={(e) => setEditingName(e.target.value)} placeholder="Nome" className="border border-stone-300 rounded-xl px-3 py-2 font-bold" />
                       <input value={editingLogin} onChange={(e) => setEditingLogin(e.target.value.toLowerCase())} placeholder="Login" className="border border-stone-300 rounded-xl px-3 py-2 font-bold" />
-                      <input type="password" value={editingPassword} onChange={(e) => setEditingPassword(e.target.value)} placeholder="Nova senha (opcional)" className="border border-stone-300 rounded-xl px-3 py-2" />
+                      <input type="password" minLength={6} value={editingPassword} onChange={(e) => setEditingPassword(e.target.value)} placeholder="Nova senha (opcional)" className="border border-stone-300 rounded-xl px-3 py-2" />
+                      <input type="email" value={editingRecoveryEmail} onChange={(e) => setEditingRecoveryEmail(e.target.value)} placeholder="E-mail de recuperação" className="border border-stone-300 rounded-xl px-3 py-2" />
                       <select value={editingPlan} onChange={(e) => setEditingPlan(e.target.value as SubscriptionPlan)} className="border border-stone-300 rounded-xl px-3 py-2 bg-white">
                         <option value="basic">Plano Básico</option>
                         <option value="pro">Plano Pro</option>
@@ -503,6 +513,7 @@ export function SuperAdmin() {
                           <button onClick={() => startEdit(c)} className="p-1.5 rounded-lg text-stone-500 hover:bg-stone-100" title="Editar empresa"><Pencil className="w-4 h-4" /></button>
                         </div>
                         <div className="text-xs text-stone-500 mt-1">ID: {c.empresa_id} • Login: <strong>{c.login || c.empresa_id}</strong></div>
+                        <div className="text-xs text-stone-500 mt-1">Recuperação: <strong>{c.recovery_email || 'não cadastrada'}</strong></div>
                         <div className="text-xs text-stone-500 mt-1 flex items-center gap-3 flex-wrap">
                           <span className="flex items-center gap-1"><Clock3 className="w-3.5 h-3.5" />Vence: <strong>{formatDate(c.vencimento_em)}</strong></span>
                           <span>{Number(c.total_avaliacoes || 0)} avaliação(ões)</span>

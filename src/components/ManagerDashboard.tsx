@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   BarChart3,
   Star,
@@ -43,7 +43,9 @@ import {
 } from 'lucide-react';
 import { RestaurantSettings, RewardOption, Review, Waiter } from '../types';
 import { CustomerDatabaseView } from './CustomerDatabaseView';
+import { UserAccessManager } from './UserAccessManager';
 import { apiUpdateAccessCredentials, tenantFetch } from '../lib/api';
+import { tenantKey } from '../lib/tenant';
 import { RatingChoiceIcon } from './RatingChoiceIcon';
 import { QUICK_TAGS_OPTIONS } from '../data/mockData';
 import type { RatingIconType } from '../types';
@@ -61,6 +63,7 @@ interface ManagerDashboardProps {
   onClearAllReviews?: () => void;
   onUpdateReviewsList?: (reviews: Review[]) => void;
   onSaveDatabase?: () => Promise<boolean> | void;
+  accessLevel?: 'owner' | 'manager' | 'viewer' | 'superadmin';
 }
 
 const DEFAULT_VOUCHER_TEMPLATE = `*VOUCHER DE CORTESIA - {{empresa}}* 🥟✨
@@ -98,7 +101,10 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
   onClearAllReviews,
   onUpdateReviewsList,
   onSaveDatabase,
+  accessLevel = 'owner',
 }) => {
+  const isViewer = accessLevel === 'viewer';
+  const isOwner = accessLevel === 'owner' || accessLevel === 'superadmin';
   // Tabs within dashboard
   const [activeTab, setActiveTab] = useState<
     'metrics' | 'reviews' | 'customers' | 'waiters' | 'validator' | 'rewards' | 'reports' | 'settings'
@@ -109,6 +115,9 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
     }
     return 'metrics';
   });
+  useEffect(() => {
+    if (isViewer && ['waiters', 'validator', 'rewards', 'settings'].includes(activeTab)) setActiveTab('metrics');
+  }, [isViewer, activeTab]);
 
 
   const [reportPeriod, setReportPeriod] = useState<'today' | '7d' | '30d' | 'all'>('30d');
@@ -412,8 +421,8 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
       setPinFeedback({ type: 'error', message: 'O login deve ter pelo menos 3 caracteres.' });
       return;
     }
-    if (password.length < 4) {
-      setPinFeedback({ type: 'error', message: 'A senha deve ter pelo menos 4 caracteres.' });
+    if (password.length < 6) {
+      setPinFeedback({ type: 'error', message: 'A senha deve ter pelo menos 6 caracteres.' });
       return;
     }
     if (password !== confirm) {
@@ -429,8 +438,16 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
       onUpdateSettings(updatedSettings);
       setAccessPassword('');
       setAccessPasswordConfirm('');
-      setPinFeedback({ type: 'success', message: '✓ Login e senha atualizados com sucesso.' });
-      setTimeout(() => setPinFeedback(null), 5000);
+      setPinFeedback({ type: 'success', message: '✓ Login e senha atualizados. Por segurança, você será desconectado para entrar novamente.' });
+      window.setTimeout(() => {
+        try {
+          sessionStorage.removeItem(tenantKey('restaurant_manager_auth'));
+          sessionStorage.removeItem(tenantKey('restaurant_manager_token'));
+          sessionStorage.removeItem(tenantKey('restaurant_manager_role'));
+          sessionStorage.removeItem(tenantKey('restaurant_manager_access'));
+        } catch {}
+        window.location.reload();
+      }, 1200);
     } catch (err: any) {
       setPinFeedback({ type: 'error', message: err?.message || 'Erro ao salvar o novo acesso.' });
     } finally {
@@ -1061,6 +1078,7 @@ return (
           )}
         </button>
 
+        {!isViewer && (
         <button
           type="button"
           onClick={() => setActiveTab('waiters')}
@@ -1076,7 +1094,9 @@ return (
             {waiters.length}
           </span>
         </button>
+        )}
 
+        {!isViewer && (
         <button
           type="button"
           onClick={() => setActiveTab('validator')}
@@ -1094,7 +1114,9 @@ return (
             </span>
           )}
         </button>
+        )}
 
+        {!isViewer && (
         <button
           type="button"
           onClick={() => setActiveTab('rewards')}
@@ -1107,6 +1129,7 @@ return (
           <Gift className="w-4 h-4" />
           <span>Gerenciar Brindes</span>
         </button>
+        )}
 
         <button
           type="button"
@@ -1121,6 +1144,7 @@ return (
           <span>Relatórios & Sugestões</span>
         </button>
 
+        {!isViewer && (
         <button
           type="button"
           onClick={() => setActiveTab('settings')}
@@ -1133,6 +1157,7 @@ return (
           <Sliders className="w-4 h-4" />
           <span>Configurações</span>
         </button>
+        )}
       </div>
 
       {/* TAB 1: METRICS */}
@@ -1823,7 +1848,7 @@ return (
       )}
 
       {/* TAB: WAITERS MANAGEMENT & EVALUATION */}
-      {activeTab === 'waiters' && (
+      {activeTab === 'waiters' && !isViewer && (
         <div className="space-y-6">
           {/* Header & Quick Action */}
           <div className="bg-white rounded-2xl p-5 sm:p-6 border border-stone-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -2230,7 +2255,7 @@ return (
       )}
 
       {/* TAB 3: VALIDATOR */}
-      {activeTab === 'validator' && (
+      {activeTab === 'validator' && !isViewer && (
         <div className="max-w-xl mx-auto space-y-6">
           <div className="bg-white rounded-3xl p-6 sm:p-8 border border-stone-200 shadow-sm text-center">
             <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto mb-3">
@@ -2327,7 +2352,7 @@ return (
       )}
 
       {/* TAB 4: REWARDS MANAGEMENT */}
-      {activeTab === 'rewards' && (
+      {activeTab === 'rewards' && !isViewer && (
         <div className="space-y-6">
           {/* Top Settings: Roulette vs Fixed */}
           <div className="bg-white rounded-2xl p-5 border border-stone-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -2766,7 +2791,7 @@ return (
       )}
 
       {/* TAB 5: SETTINGS */}
-      {activeTab === 'settings' && (
+      {activeTab === 'settings' && !isViewer && (
         <div className="max-w-xl mx-auto bg-white rounded-2xl p-6 border border-stone-200 shadow-sm space-y-4">
           <h3 className="font-bold text-stone-900 text-base mb-2">
             Dados do Estabelecimento & Mesas
@@ -3328,6 +3353,7 @@ return (
               </div>
           </div>
 
+          {isOwner && (<>
           {/* Security & Access Protection Card */}
           <div className="p-5 sm:p-6 bg-white rounded-3xl border border-stone-200 shadow-sm space-y-4">
             <div className="flex items-center gap-2.5">
@@ -3347,7 +3373,7 @@ return (
                 <div>
                   <label className="block text-xs font-bold text-stone-800 mb-1">Nova senha</label>
                   <div className="relative">
-                    <input type={showAccessPassword ? 'text' : 'password'} value={accessPassword} onChange={(e)=>{setAccessPassword(e.target.value); if(pinFeedback)setPinFeedback(null);}} placeholder="Mínimo 4 caracteres" className="w-full text-sm font-bold p-3 pr-10 rounded-xl border border-stone-300 bg-white focus:border-rose-500 outline-none" />
+                    <input type={showAccessPassword ? 'text' : 'password'} value={accessPassword} onChange={(e)=>{setAccessPassword(e.target.value); if(pinFeedback)setPinFeedback(null);}} placeholder="Mínimo 6 caracteres" className="w-full text-sm font-bold p-3 pr-10 rounded-xl border border-stone-300 bg-white focus:border-rose-500 outline-none" />
                     <button type="button" onClick={()=>setShowAccessPassword(v=>!v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400">{showAccessPassword ? <EyeOff className="w-4 h-4"/> : <Eye className="w-4 h-4"/>}</button>
                   </div>
                 </div>
@@ -3364,6 +3390,10 @@ return (
               </div>
             </form>
           </div>
+
+
+          <UserAccessManager />
+          </>)}
 
           {/* General Save Settings Action */}
           {onSaveDatabase && (
