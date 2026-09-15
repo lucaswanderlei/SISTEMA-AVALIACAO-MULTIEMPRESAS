@@ -52,6 +52,8 @@ import {
   apiSyncPush,
   apiSaveWhatsAppSettings,
   apiManagerLogin,
+  apiRequestPasswordReset,
+  apiResetPassword,
   apiFetchCompanyStatus,
   CompanyAccessStatus,
 } from './lib/api';
@@ -86,6 +88,7 @@ export default function App() {
   // Links de QR antigos podem ter sido gerados enquanto o painel estava em /gerencia.
   // Se houver marcadores de cliente/QR/mesa, o modo cliente SEMPRE tem prioridade.
   const initialUrlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+  const initialResetToken = initialUrlParams?.get('reset_token') || '';
   const initialIsCustomerUrl = !!(
     initialUrlParams?.get('cliente') ||
     initialUrlParams?.get('origem') === 'qrcode' ||
@@ -117,6 +120,7 @@ export default function App() {
           sessionStorage.removeItem(tenantKey('restaurant_manager_auth'));
           sessionStorage.removeItem(tenantKey('restaurant_manager_token'));
           sessionStorage.removeItem(tenantKey('restaurant_manager_role'));
+          sessionStorage.removeItem(tenantKey('restaurant_manager_access'));
         } catch {}
         return false;
       }
@@ -132,6 +136,14 @@ export default function App() {
       return sessionStorage.getItem(tenantKey('restaurant_manager_role')) || 'manager';
     } catch {
       return 'manager';
+    }
+  });
+  const [managerAccessLevel, setManagerAccessLevel] = useState<'owner' | 'manager' | 'viewer' | 'superadmin'>(() => {
+    if (typeof window === 'undefined') return 'owner';
+    try {
+      return (sessionStorage.getItem(tenantKey('restaurant_manager_access')) as 'owner' | 'manager' | 'viewer' | 'superadmin') || 'owner';
+    } catch {
+      return 'owner';
     }
   });
 
@@ -168,6 +180,14 @@ export default function App() {
   const [showPinSecret, setShowPinSecret] = useState<boolean>(false);
   const [isAuthenticating, setIsAuthenticating] = useState<boolean>(false);
   const [pendingView, setPendingView] = useState<'manager' | 'qr_display'>('manager');
+  const [showForgotPassword, setShowForgotPassword] = useState<boolean>(false);
+  const [forgotFeedback, setForgotFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [isRequestingReset, setIsRequestingReset] = useState<boolean>(false);
+  const [showResetModal, setShowResetModal] = useState<boolean>(Boolean(initialResetToken));
+  const [resetPassword, setResetPassword] = useState<string>('');
+  const [resetPasswordConfirm, setResetPasswordConfirm] = useState<string>('');
+  const [resetFeedback, setResetFeedback] = useState<string>('');
+  const [isResettingPassword, setIsResettingPassword] = useState<boolean>(false);
 
   // Check URL query parameters for ?mesa=X or ?cliente=1
   useEffect(() => {
@@ -183,7 +203,7 @@ export default function App() {
         setPendingView('manager');
         const authenticated = sessionStorage.getItem(tenantKey('restaurant_manager_auth')) === 'true';
         setIsManagerLoggedIn(authenticated);
-        if (!authenticated) setShowPinModal(true);
+        if (!authenticated && !initialResetToken) setShowPinModal(true);
       }
 
       if (isClientUrl && !isManagerUrl) {
@@ -194,8 +214,10 @@ export default function App() {
           sessionStorage.removeItem(tenantKey('restaurant_manager_auth'));
           sessionStorage.removeItem(tenantKey('restaurant_manager_token'));
           sessionStorage.removeItem(tenantKey('restaurant_manager_role'));
+          sessionStorage.removeItem(tenantKey('restaurant_manager_access'));
         } catch {}
         setManagerRole('');
+        setManagerAccessLevel('owner');
       }
 
       if (mesaParam) {
@@ -358,8 +380,58 @@ export default function App() {
       setLoginInput(settings.managerLogin || '');
       setPinInput('');
       setPinError('');
+      setShowForgotPassword(false);
+      setForgotFeedback(null);
       setShowPinModal(true);
     }
+  };
+
+  const handleRequestPasswordReset = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const login = loginInput.trim();
+    if (!login) {
+      setForgotFeedback({ type: 'error', message: 'Informe seu login para recuperar a senha.' });
+      return;
+    }
+    setIsRequestingReset(true);
+    setForgotFeedback(null);
+    const result = await apiRequestPasswordReset(login);
+    setIsRequestingReset(false);
+    setForgotFeedback(result.success
+      ? { type: 'success', message: result.message || 'Verifique seu e-mail.' }
+      : { type: 'error', message: result.error || 'Não foi possível solicitar a recuperação.' });
+  };
+
+  const handleResetPassword = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setResetFeedback('');
+    if (resetPassword.length < 6) {
+      setResetFeedback('A nova senha deve ter pelo menos 6 caracteres.');
+      return;
+    }
+    if (resetPassword !== resetPasswordConfirm) {
+      setResetFeedback('A confirmação da senha não confere.');
+      return;
+    }
+    setIsResettingPassword(true);
+    const result = await apiResetPassword(initialResetToken, resetPassword);
+    setIsResettingPassword(false);
+    if (!result.success) {
+      setResetFeedback(result.error || 'Não foi possível redefinir a senha.');
+      return;
+    }
+    setResetFeedback(result.message || 'Senha redefinida com sucesso.');
+    setResetPassword('');
+    setResetPasswordConfirm('');
+    window.setTimeout(() => {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('reset_token');
+      window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+      setShowResetModal(false);
+      setShowPinModal(true);
+      setShowForgotPassword(false);
+      setPinError('Senha redefinida. Entre com a nova senha.');
+    }, 900);
   };
 
   const handleVerifyPin = async (e?: React.FormEvent) => {
@@ -379,8 +451,10 @@ export default function App() {
       try {
         sessionStorage.setItem(tenantKey('restaurant_manager_auth'), 'true');
         sessionStorage.setItem(tenantKey('restaurant_manager_role'), result.role || 'manager');
+        sessionStorage.setItem(tenantKey('restaurant_manager_access'), result.role === 'superadmin' ? 'superadmin' : (result.accessLevel || 'owner'));
       } catch {}
       setManagerRole(result.role || 'manager');
+      setManagerAccessLevel(result.role === 'superadmin' ? 'superadmin' : (result.accessLevel || 'owner'));
       setIsManagerLoggedIn(true);
       setActiveView(pendingView);
       setShowPinModal(false);
@@ -418,9 +492,11 @@ export default function App() {
       sessionStorage.removeItem(tenantKey('restaurant_manager_auth'));
       sessionStorage.removeItem(tenantKey('restaurant_manager_token'));
       sessionStorage.removeItem(tenantKey('restaurant_manager_role'));
+      sessionStorage.removeItem(tenantKey('restaurant_manager_access'));
     } catch {}
     setIsManagerLoggedIn(false);
     setManagerRole('');
+    setManagerAccessLevel('owner');
     setActiveView('customer');
     showToast('Painel do restaurante bloqueado com sucesso.');
   };
@@ -836,10 +912,11 @@ export default function App() {
             onUpdateRewards={handleRewardsChange}
             onUpdateSettings={handleSettingsChange}
             onUpdateWaiters={handleWaitersChange}
-            onDeleteReview={handleDeleteReview}
-            onClearAllReviews={handleClearAllReviews}
-            onUpdateReviewsList={(updated) => setReviews(updated)}
-            onSaveDatabase={handleForceSaveDatabase}
+            onDeleteReview={managerAccessLevel === 'viewer' ? undefined : handleDeleteReview}
+            onClearAllReviews={managerAccessLevel === 'viewer' ? undefined : handleClearAllReviews}
+            onUpdateReviewsList={managerAccessLevel === 'viewer' ? undefined : ((updated) => setReviews(updated))}
+            onSaveDatabase={managerAccessLevel === 'viewer' ? undefined : handleForceSaveDatabase}
+            accessLevel={managerAccessLevel}
           />
         )}
 
@@ -903,6 +980,24 @@ export default function App() {
         </div>
       </footer>
 
+      {showResetModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-stone-900/70 backdrop-blur-xs">
+          <div className="w-full max-w-sm bg-white rounded-3xl p-6 sm:p-7 shadow-2xl border border-stone-200">
+            <div className="text-center space-y-2 mb-5">
+              <div className="w-14 h-14 rounded-2xl bg-sky-50 text-sky-600 flex items-center justify-center mx-auto border border-sky-100"><KeyRound className="w-7 h-7" /></div>
+              <h3 className="text-lg font-black text-stone-900">Criar nova senha</h3>
+              <p className="text-xs text-stone-500">Defina uma nova senha para este acesso. O link pode ser usado apenas uma vez.</p>
+            </div>
+            <form onSubmit={handleResetPassword} className="space-y-3">
+              <input type="password" autoFocus minLength={6} value={resetPassword} onChange={e=>{setResetPassword(e.target.value); setResetFeedback('');}} placeholder="Nova senha (mínimo 6 caracteres)" className="w-full py-3 px-4 text-sm font-bold bg-stone-50 border-2 border-stone-300 rounded-2xl outline-none focus:border-sky-600" />
+              <input type="password" minLength={6} value={resetPasswordConfirm} onChange={e=>{setResetPasswordConfirm(e.target.value); setResetFeedback('');}} placeholder="Confirmar nova senha" className="w-full py-3 px-4 text-sm font-bold bg-stone-50 border-2 border-stone-300 rounded-2xl outline-none focus:border-sky-600" />
+              {resetFeedback && <div className="p-3 rounded-xl bg-stone-50 border border-stone-200 text-xs font-bold text-stone-700">{resetFeedback}</div>}
+              <button type="submit" disabled={isResettingPassword} className="w-full py-3.5 bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white text-xs font-black rounded-xl">{isResettingPassword ? 'Salvando...' : 'Redefinir senha'}</button>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* ========================================================================= */}
       {/* PIN AUTHENTICATION MODAL (PROTEÇÃO CONTRA ACESSO INDEVIDO DE CLIENTES)   */}
       {/* ========================================================================= */}
@@ -933,44 +1028,60 @@ export default function App() {
               </p>
             </div>
 
-            <form onSubmit={handleVerifyPin} className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-stone-700">Login</label>
-                <input
-                  type="text"
-                  autoFocus
-                  autoComplete="username"
-                  value={loginInput}
-                  onChange={(e) => { setLoginInput(e.target.value); if (pinError) setPinError(''); }}
-                  placeholder="Login da empresa"
-                  className="w-full py-3 px-4 text-sm font-bold bg-stone-50 border-2 border-stone-300 rounded-2xl outline-none focus:border-rose-600 focus:bg-white"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-stone-700">Senha</label>
-                <div className="relative">
+            {!showForgotPassword ? (
+              <form onSubmit={handleVerifyPin} className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-stone-700">Login</label>
                   <input
-                    type={showPinSecret ? 'text' : 'password'}
-                    autoComplete="current-password"
-                    value={pinInput}
-                    onChange={(e) => { setPinInput(e.target.value); if (pinError) setPinError(''); }}
-                    placeholder="Sua senha"
-                    className={`w-full py-3 px-4 pr-12 text-sm font-bold bg-stone-50 border-2 rounded-2xl outline-none transition ${pinError ? 'border-rose-500 bg-rose-50/50 text-rose-900' : 'border-stone-300 focus:border-rose-600 focus:bg-white'}`}
+                    type="text"
+                    autoFocus
+                    autoComplete="username"
+                    value={loginInput}
+                    onChange={(e) => { setLoginInput(e.target.value); if (pinError) setPinError(''); }}
+                    placeholder="Login da empresa"
+                    className="w-full py-3 px-4 text-sm font-bold bg-stone-50 border-2 border-stone-300 rounded-2xl outline-none focus:border-rose-600 focus:bg-white"
                   />
-                  <button type="button" onClick={() => setShowPinSecret(!showPinSecret)} className="absolute right-3 top-1/2 -translate-y-1/2 p-2 text-stone-400 hover:text-stone-600">
-                    {showPinSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
                 </div>
-                {pinError && <p className="text-xs text-rose-600 font-bold text-center flex items-center justify-center gap-1 pt-1"><ShieldAlert className="w-3.5 h-3.5"/><span>{pinError}</span></p>}
-              </div>
-              <div className="space-y-2 pt-2">
-                <button type="submit" disabled={isAuthenticating} className="w-full py-3.5 px-4 bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white text-xs font-black rounded-xl transition shadow-md shadow-rose-600/20 flex items-center justify-center gap-2">
-                  <ShieldCheck className="w-4 h-4" />
-                  <span>{isAuthenticating ? 'Verificando...' : 'Entrar no Painel'}</span>
-                </button>
-                <button type="button" onClick={() => { setShowPinModal(false); setPinInput(''); setPinError(''); }} className="w-full py-2 text-stone-500 hover:text-stone-800 text-xs font-bold transition">Voltar para Avaliação do Cliente</button>
-              </div>
-            </form>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-stone-700">Senha</label>
+                  <div className="relative">
+                    <input
+                      type={showPinSecret ? 'text' : 'password'}
+                      autoComplete="current-password"
+                      value={pinInput}
+                      onChange={(e) => { setPinInput(e.target.value); if (pinError) setPinError(''); }}
+                      placeholder="Sua senha"
+                      className={`w-full py-3 px-4 pr-12 text-sm font-bold bg-stone-50 border-2 rounded-2xl outline-none transition ${pinError ? 'border-rose-500 bg-rose-50/50 text-rose-900' : 'border-stone-300 focus:border-rose-600 focus:bg-white'}`}
+                    />
+                    <button type="button" onClick={() => setShowPinSecret(!showPinSecret)} className="absolute right-3 top-1/2 -translate-y-1/2 p-2 text-stone-400 hover:text-stone-600">
+                      {showPinSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  {pinError && <p className="text-xs text-rose-600 font-bold text-center flex items-center justify-center gap-1 pt-1"><ShieldAlert className="w-3.5 h-3.5"/><span>{pinError}</span></p>}
+                </div>
+                <div className="space-y-2 pt-2">
+                  <button type="submit" disabled={isAuthenticating} className="w-full py-3.5 px-4 bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white text-xs font-black rounded-xl transition shadow-md shadow-rose-600/20 flex items-center justify-center gap-2">
+                    <ShieldCheck className="w-4 h-4" />
+                    <span>{isAuthenticating ? 'Verificando...' : 'Entrar no Painel'}</span>
+                  </button>
+                  <button type="button" onClick={() => { setShowForgotPassword(true); setForgotFeedback(null); setPinError(''); }} className="w-full py-2 text-rose-600 hover:text-rose-700 text-xs font-bold transition">Esqueci minha senha</button>
+                  <button type="button" onClick={() => { setShowPinModal(false); setPinInput(''); setPinError(''); }} className="w-full py-2 text-stone-500 hover:text-stone-800 text-xs font-bold transition">Voltar para Avaliação do Cliente</button>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={handleRequestPasswordReset} className="space-y-4">
+                <div className="p-3 rounded-2xl bg-sky-50 border border-sky-100 text-xs text-sky-800 leading-relaxed">
+                  Informe seu login. Se houver um e-mail de recuperação cadastrado, enviaremos um link válido por 30 minutos.
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-stone-700">Login</label>
+                  <input type="text" autoFocus value={loginInput} onChange={(e)=>{setLoginInput(e.target.value); setForgotFeedback(null);}} placeholder="Seu login" className="w-full py-3 px-4 text-sm font-bold bg-stone-50 border-2 border-stone-300 rounded-2xl outline-none focus:border-sky-600 focus:bg-white" />
+                </div>
+                {forgotFeedback && <div className={`p-3 rounded-xl text-xs font-bold ${forgotFeedback.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'}`}>{forgotFeedback.message}</div>}
+                <button type="submit" disabled={isRequestingReset} className="w-full py-3.5 px-4 bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white text-xs font-black rounded-xl transition">{isRequestingReset ? 'Enviando...' : 'Enviar link de recuperação'}</button>
+                <button type="button" onClick={()=>{setShowForgotPassword(false); setForgotFeedback(null);}} className="w-full py-2 text-stone-500 text-xs font-bold">Voltar ao login</button>
+              </form>
+            )}
           </div>
         </div>
       )}
