@@ -41,6 +41,7 @@ export function parseReviewInput(body: any) {
     customerPhone: normalizeReviewPhone(body.customerPhone),
     tableNumber: table ?? null,
     ratings: Object.fromEntries(['service', 'ambiance', 'products', 'waitTime'].map(key => [key, rating(body.ratings?.[key])])),
+    consumedItemIds: tags(body.consumedItemIds),
     quickTags: tags(body.quickTags), criticism: text(body.criticism, 2000), suggestion: text(body.suggestion, 2000),
     waiterId: text(body.waiterId, 128),
     waiterRating: body.waiterId ? rating(body.waiterRating) : null,
@@ -58,6 +59,11 @@ export function issueReview(db: any, input: ReturnType<typeof parseReviewInput>[
   if (input.tableNumber && input.tableNumber > Number(settings.totalTables || 24)) throw new CommerceError(400, 'Mesa não cadastrada.');
   const waiter = input.waiterId ? db.waiters.find((w: any) => w.id === input.waiterId && w.active) : null;
   if (input.waiterId && !waiter) throw new CommerceError(400, 'Atendente não disponível.');
+  const consumedItems = input.consumedItemIds.map(id => {
+    const item = (settings.consumptionItems || []).find((item: any) => item.id === id);
+    if (!item) throw new CommerceError(400, 'Um item selecionado não está mais disponível. Atualize a página e selecione novamente.', 'ITEM_UNAVAILABLE');
+    return { id: item.id, name: item.name };
+  });
   const enabled = db.rewards.filter((r: any) => r.enabled === true);
   let reward: any;
   if (settings.activeRewardMode === 'fixed') {
@@ -84,6 +90,7 @@ export function issueReview(db: any, input: ReturnType<typeof parseReviewInput>[
     id: `rev-${crypto.randomUUID()}`, customerName: input.customerName,
     customerPhone: input.customerPhone, customerPhoneNormalized: input.customerPhone,
     ...(input.tableNumber ? { tableNumber: input.tableNumber } : {}),
+    consumedItems,
     ratings: input.ratings, quickTags: input.quickTags, criticism: input.criticism, suggestion: input.suggestion,
     ...(waiter ? { waiterId: waiter.id, waiterName: waiter.nickname ? `${waiter.name} (${waiter.nickname})` : waiter.name,
       waiterRating: input.waiterRating, waiterCompliments: input.waiterCompliments, waiterCompliment: input.waiterCompliments.join(' • ') } : {}),
@@ -159,4 +166,21 @@ export function mergeDbChanges(base: any, changed: any, current: any): any {
 
 export function tenantDispatches<T extends { companyId: string }>(rows: T[], companyId: string): T[] {
   return rows.filter(row => row.companyId === companyId).slice(0, 50);
+}
+
+export function updateConsumptionCatalog(db: any, operation: 'create' | 'update' | 'delete', id: string, name?: unknown) {
+  const items: Array<{id: string; name: string}> = db.settings.consumptionItems || [];
+  if (operation !== 'create' && !items.some(item => item.id === id)) throw new CommerceError(404, 'Item não encontrado.');
+  if (operation === 'delete') {
+    db.settings.consumptionItems = items.filter(item => item.id !== id);
+  } else {
+    const clean = text(name, 100);
+    if (!clean) throw new CommerceError(400, 'Informe o nome do item.');
+    if (items.some(item => item.id !== id && item.name.toLocaleLowerCase('pt-BR') === clean.toLocaleLowerCase('pt-BR'))) throw new CommerceError(409, 'Já existe um item com esse nome.');
+    if (operation === 'create' && items.length >= 500) throw new CommerceError(400, 'Limite de 500 itens atingido.');
+    db.settings.consumptionItems = operation === 'create'
+      ? [...items, { id: crypto.randomUUID(), name: clean }]
+      : items.map(item => item.id === id ? { ...item, name: clean } : item);
+  }
+  return db.settings.consumptionItems;
 }

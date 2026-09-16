@@ -1,4 +1,4 @@
-import { CommerceError, clone, mergeDbChanges, tenantDispatches } from './commerce-security';
+import { CommerceError, clone, mergeDbChanges, tenantDispatches, updateConsumptionCatalog } from './commerce-security';
 import { initCommerceSchema, withCompanyTransaction, createPublicReview, redeemVoucher, consumePublicReviewRate } from './commerce-store';
 import express from 'express';
 import path from 'path';
@@ -324,6 +324,7 @@ const DB_FILE = path.join(DATA_DIR, 'restaurant_db.json');
 const DB_BACKUP_FILE = path.join(DATA_DIR, 'restaurant_db.backup.json');
 
 const DEFAULT_SETTINGS = {
+  consumptionItems: [] as Array<{ id: string; name: string }>,
   name: 'Sr. Coxita',
   tagline: 'As melhores coxinhas e delícias artesanais',
   primaryColor: '#e11d48',
@@ -2367,7 +2368,8 @@ if (totalEmpresas === 0) {
   app.post('/api/settings', requireCompanyEditor, async (req, res) => {
     try {
       const companyId = currentCompanyId();
-      const incoming = req.body && typeof req.body === 'object' ? req.body : {};
+      const incoming = req.body && typeof req.body === 'object' ? { ...req.body } : {};
+      delete incoming.consumptionItems; // Catalog changes use their dedicated transactional routes.
       const incomingName = String(incoming.name || '').trim();
 
       const result = await pool.query(
@@ -2480,6 +2482,18 @@ if (totalEmpresas === 0) {
     }
   });
 
+  app.get('/api/consumption-items', requireCompanyManager, (_req, res) => {
+    res.json({ items: activeDb.settings.consumptionItems || [] });
+  });
+  for (const [method, operation] of [['post', 'create'], ['patch', 'update'], ['delete', 'delete']] as const) {
+    app[method](operation === 'create' ? '/api/consumption-items' : '/api/consumption-items/:id', requireCompanyEditor, async (req, res) => {
+      const result = await withCompanyTransaction(pool, currentCompanyId(), db =>
+        updateConsumptionCatalog(db, operation, String(req.params.id || ''), req.body?.name));
+      adoptCommittedDb(result.db);
+      res.json({ success: true, items: result.value });
+    });
+  }
+
   // Update Rewards
   app.post('/api/rewards', requireCompanyEditor, async (req, res) => {
     try {
@@ -2550,7 +2564,7 @@ if (totalEmpresas === 0) {
         ...currentData,
         settings:
           settings && typeof settings === 'object'
-            ? { ...(currentData.settings || {}), ...settings }
+            ? { ...(currentData.settings || {}), ...settings, consumptionItems: currentData.settings?.consumptionItems || [] }
             : (currentData.settings || {}),
         rewards: Array.isArray(rewards) ? rewards : (Array.isArray(currentData.rewards) ? currentData.rewards : []),
         waiters: Array.isArray(waiters) ? waiters : (Array.isArray(currentData.waiters) ? currentData.waiters : []),
@@ -2610,12 +2624,12 @@ if (totalEmpresas === 0) {
   // Export detalhado de avaliações. Disponível para qualquer usuário autenticado da empresa.
   app.get('/api/exports/reviews.csv', requireCompanyManager, (_req, res) => {
     const rows = Array.isArray(activeDb.reviews) ? activeDb.reviews : [];
-    const headers = ['ID','Nome','Telefone','Mesa','Atendente','Nota Atendimento','Nota Ambiente','Nota Produtos','Nota Espera','Media Geral','Destaques','Critica','Sugestao','Brinde','Codigo Voucher','Resgatado','Aviso Privacidade','Versao Aviso','Aceitou Ofertas','Data Avaliacao','Data Resgate'];
+    const headers = ['ID','Nome','Telefone','Mesa','Atendente','Nota Atendimento','Nota Ambiente','Nota Produtos','Nota Espera','Media Geral','Destaques','Critica','Sugestao','Brinde','Codigo Voucher','Resgatado','Aviso Privacidade','Versao Aviso','Aceitou Ofertas','Data Avaliacao','Data Resgate','Itens Consumidos'];
     const lines = rows.map((r: any) => [
       r.id, r.customerName || '', r.customerPhone || '', r.tableNumber || '', r.waiterName || '',
       r.ratings?.service ?? '', r.ratings?.ambiance ?? '', r.ratings?.products ?? '', r.ratings?.waitTime ?? '', reviewAverage(r).toFixed(2),
       Array.isArray(r.quickTags) ? r.quickTags.join(' | ') : '', r.criticism || '', r.suggestion || '', r.rewardTitle || '', r.rewardCode || '',
-      r.rewardClaimed ? 'Sim' : 'Nao', r.privacyAcceptedAt || '', r.privacyNoticeVersion || '', r.marketingConsent ? 'Sim' : 'Nao', r.createdAt || '', r.claimedAt || ''
+      r.rewardClaimed ? 'Sim' : 'Nao', r.privacyAcceptedAt || '', r.privacyNoticeVersion || '', r.marketingConsent ? 'Sim' : 'Nao', r.createdAt || '', r.claimedAt || '', (r.consumedItems || []).map((item: any) => item.name).join(' | ')
     ].map(csvCell).join(';'));
     const name = safeExportFilePart(activeDb.settings?.name || currentCompanyId());
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
