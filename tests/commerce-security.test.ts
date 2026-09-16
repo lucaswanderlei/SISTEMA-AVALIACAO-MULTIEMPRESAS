@@ -81,3 +81,33 @@ test('consulta de histórico só devolve envios da empresa autorizada', () => {
   assert.deepEqual(tenantDispatches(rows, 'a').map(r => r.phone), ['111', '333']);
   assert.deepEqual(tenantDispatches(rows, 'c'), []);
 });
+
+test('itens consumidos usam nomes do cadastro e preservam o histórico após edição/exclusão', async () => {
+  const { updateConsumptionCatalog } = await import('../commerce-security');
+  const data: any = db();
+  const items = updateConsumptionCatalog(data, 'create', '', 'Coxinha de frango');
+  const id = items[0].id;
+  const parsed = parseReviewInput({ ...body(), consumedItemIds: [id, id], consumedItems: [{ id, name: 'Nome inventado' }] });
+  const issued = issueReview(data, parsed.input, now);
+  assert.deepEqual(issued.review.consumedItems, [{ id, name: 'Coxinha de frango' }]);
+  data.reviews.push(issued.review);
+  updateConsumptionCatalog(data, 'update', id, 'Coxinha cremosa');
+  assert.equal(data.settings.consumptionItems[0].name, 'Coxinha cremosa');
+  updateConsumptionCatalog(data, 'delete', id);
+  assert.equal(data.settings.consumptionItems.length, 0);
+  assert.equal(data.reviews[0].consumedItems[0].name, 'Coxinha de frango');
+  assert.throws(() => issueReview(data, parsed.input, now), { code: 'ITEM_UNAVAILABLE' });
+});
+test('catálogo recusa nomes vazios, duplicados e edição de item inexistente', async () => {
+  const { updateConsumptionCatalog } = await import('../commerce-security');
+  const data: any = db();
+  updateConsumptionCatalog(data, 'create', '', 'Pizza');
+  assert.throws(() => updateConsumptionCatalog(data, 'create', '', ' pizza '));
+  assert.throws(() => updateConsumptionCatalog(data, 'create', '', '   '));
+  assert.throws(() => updateConsumptionCatalog(data, 'update', 'inexistente', 'Suco'));
+});
+test('avaliações sem itens continuam funcionando e IDs desconhecidos são recusados', () => {
+  assert.deepEqual(issueReview(db(), parseReviewInput(body()).input, now).review.consumedItems, []);
+  const forged = parseReviewInput({ ...body(), consumedItemIds: ['outra-empresa'] });
+  assert.throws(() => issueReview(db(), forged.input, now), { code: 'ITEM_UNAVAILABLE' });
+});

@@ -108,3 +108,18 @@ test('empresa suspensa não recebe avaliações mesmo após a checagem inicial',
   await assert.rejects(createPublicReview(pool, 'a', input()));
   assert.equal((await read()).dados.reviews.length, 0);
 });
+
+test('catálogo persiste por empresa e consumo mantém nome histórico no PostgreSQL', async () => {
+  const { updateConsumptionCatalog } = await import('../commerce-security');
+  const catalog = await withCompanyTransaction(pool, 'a', db => updateConsumptionCatalog(db, 'create', '', 'Hambúrguer'));
+  const id = catalog.value[0].id;
+  assert.equal((await read()).dados.settings.consumptionItems[0].name, 'Hambúrguer');
+  assert.equal((await read('b')).dados.settings.consumptionItems, undefined);
+  await assert.rejects(createPublicReview(pool, 'b', { ...input(), consumedItemIds: [id] }), { code: 'ITEM_UNAVAILABLE' });
+  await createPublicReview(pool, 'a', { ...input(), consumedItemIds: [id] });
+  await withCompanyTransaction(pool, 'a', db => updateConsumptionCatalog(db, 'update', id, 'Smash burger'));
+  await withCompanyTransaction(pool, 'a', db => updateConsumptionCatalog(db, 'delete', id));
+  const saved = (await read()).dados;
+  assert.equal(saved.settings.consumptionItems.length, 0);
+  assert.equal(saved.reviews[0].consumedItems[0].name, 'Hambúrguer');
+});
