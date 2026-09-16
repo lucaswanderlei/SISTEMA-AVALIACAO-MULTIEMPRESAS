@@ -1,3 +1,5 @@
+export interface ConsumptionItem { id: string; name: string; }
+
 export interface RatingCriteria {
   service: number;     // Atendimento (1 to 5)
   ambiance: number;    // Ambiente (1 to 5)
@@ -17,6 +19,7 @@ export interface Waiter {
 }
 
 export interface PublicReviewInput {
+  consumedItemIds?: string[];
   requestToken: string;
   customerName?: string;
   customerPhone: string;
@@ -33,6 +36,7 @@ export interface PublicReviewInput {
 }
 
 export interface Review {
+  consumedItems?: ConsumptionItem[];
   rewardId?: string;
   id: string;
   tableNumber?: number;
@@ -81,6 +85,7 @@ export interface RewardOption {
 export type RatingIconType = 'star' | 'coxinha' | 'brigadeiro' | 'cake' | 'pizza' | 'icecream' | 'coffee' | 'hamburger' | 'fries' | 'donut' | 'chicken' | 'beef' | 'sandwich' | 'hotdog' | 'croissant' | 'cupcake' | 'cookie' | 'shrimp' | 'fish' | 'pasta' | 'drink' | 'beer' | 'meal' | 'salad' | 'taco' | 'skewer';
 
 export interface RestaurantSettings {
+  consumptionItems?: ConsumptionItem[];
   name: string;
   tagline: string;
   primaryColor: string;

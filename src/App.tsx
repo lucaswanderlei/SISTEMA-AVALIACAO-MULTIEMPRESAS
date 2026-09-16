@@ -830,6 +830,7 @@ export default function App() {
 
         {activeView === 'manager' && isManagerLoggedIn && (!companyBlocked || managerCanBypassSubscription) && (
           <ManagerDashboard
+            onConsumptionItemsChange={items => setSettings(previous => { const next = { ...previous, consumptionItems: items }; saveSettings(next); return next; })}
             reviews={reviews}
             rewards={rewards}
             settings={settings}
