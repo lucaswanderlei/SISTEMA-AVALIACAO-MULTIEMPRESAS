@@ -1027,9 +1027,18 @@ if (totalEmpresas === 0) {
       const superPath = req.path.replace(/\/$/, '');
       const isSuperAdminPage = superPath === '/superadmin' || superPath === '/super-admin';
 
-      // Ao abrir a URL principal (ou /gerencia) sem empresa, acrescenta
-      // automaticamente ?empresa=<Sr. Coxita>, preservando os demais parâmetros.
-      if (!requestedCompany && !isSuperAdminPage) {
+      // A URL principal (e páginas institucionais) sem nenhum parâmetro deve
+      // cair na tela de login (AccessPortal) do lado do cliente, não em uma
+      // empresa específica. Só preenchemos ?empresa= automaticamente quando a
+      // URL já indica claramente uma avaliação/QR antigo (mesa, cliente ou
+      // origem=qrcode) ou um acesso de gerência legado (gerencia=1), mas
+      // faltou o parâmetro empresa — mantendo QR Codes impressos antigos
+      // funcionando sem forçar a raiz do domínio para uma empresa fixa.
+      const isNoContextPage = superPath === '' || superPath === '/acesso' || superPath === '/privacidade' || superPath === '/termos';
+      const hasLegacyEvaluationContext = Boolean(
+        req.query.mesa || req.query.cliente || req.query.origem === 'qrcode' || req.query.gerencia === '1'
+      );
+      if (!requestedCompany && !isSuperAdminPage && !isNoContextPage && hasLegacyEvaluationContext) {
         try {
           const defaultCompanyId = await getDefaultPublicCompanyId();
           if (defaultCompanyId) {
