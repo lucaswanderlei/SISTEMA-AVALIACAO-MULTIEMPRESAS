@@ -117,6 +117,8 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
     products: 0,
     waitTime: 0,
   });
+  const [consumedItemIds, setConsumedItemIds] = useState<string[]>([]);
+  const [itemSearch, setItemSearch] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [criticism, setCriticism] = useState('');
   const [suggestion, setSuggestion] = useState('');
@@ -262,7 +264,7 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
       const payload = {
         customerName: customerName.trim(), customerPhone: customerPhone.trim(),
         ...(!isBalcao && selectedTable > 0 ? { tableNumber: selectedTable } : {}),
-        ratings, quickTags: selectedTags, criticism: criticism.trim(), suggestion: suggestion.trim(),
+        consumedItemIds, ratings, quickTags: selectedTags, criticism: criticism.trim(), suggestion: suggestion.trim(),
         ...(selectedWaiterId ? { waiterId: selectedWaiterId, waiterRating, waiterCompliments } : {}),
         privacyAcknowledged, marketingConsent: settings.marketingOptInEnabled !== false && marketingConsent,
       };
@@ -305,6 +307,8 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
   const handleResetForNextCustomer = () => {
     setRatings({ service: 0, ambiance: 0, products: 0, waitTime: 0 });
     setSelectedTags([]);
+    setConsumedItemIds([]);
+    setItemSearch('');
     setCriticism('');
     setSuggestion('');
     setCustomerName('');
@@ -629,6 +633,24 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
               ratingIcon={settings.waitTimeRatingIcon || settings.ratingIcon || 'coxinha'}
             />
           </div>
+
+          {(settings.consumptionItems || []).length > 0 && (
+            <section className="bg-white rounded-2xl p-5 border border-stone-200 shadow-sm">
+              <h3 className="font-bold text-stone-900 text-base">O que você consumiu?</h3>
+              <p className="text-sm text-stone-500 mt-1 mb-3">Marque os itens que você pediu. Pode selecionar mais de um. (Opcional)</p>
+              {(settings.consumptionItems || []).length > 8 && <input aria-label="Buscar item consumido" value={itemSearch} onChange={e => setItemSearch(e.target.value)} placeholder="Buscar item..." className="w-full border border-stone-300 rounded-xl px-3 py-2 mb-3" />}
+              <div className="flex flex-wrap gap-2 max-h-64 overflow-y-auto">
+                {(settings.consumptionItems || []).filter(item => item.name.toLocaleLowerCase('pt-BR').includes(itemSearch.toLocaleLowerCase('pt-BR'))).map(item => (
+                  <button key={item.id} type="button" aria-pressed={consumedItemIds.includes(item.id)} disabled={isSubmitting}
+                    onClick={() => setConsumedItemIds(ids => ids.includes(item.id) ? ids.filter(id => id !== item.id) : ids.length < 30 ? [...ids, item.id] : ids)}
+                    className={`px-4 py-2 rounded-xl text-sm font-semibold border transition ${consumedItemIds.includes(item.id) ? 'bg-rose-600 border-rose-600 text-white' : 'bg-white border-stone-300 text-stone-700 hover:bg-rose-50'}`}>
+                    {consumedItemIds.includes(item.id) ? '✓ ' : ''}{item.name}
+                  </button>
+                ))}
+              </div>
+              {consumedItemIds.length > 0 && <p className="text-xs text-stone-500 mt-3">{consumedItemIds.length} item(ns) selecionado(s){consumedItemIds.length === 30 ? ' — limite de 30 por avaliação' : ''}</p>}
+            </section>
+          )}
 
           {/* Quick Tags Section */}
           <div className="bg-white rounded-2xl p-5 border border-stone-200 shadow-sm">

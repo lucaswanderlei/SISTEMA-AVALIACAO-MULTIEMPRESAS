@@ -1,3 +1,5 @@
+import { ConsumptionItemsManager } from './ConsumptionItemsManager';
+import type { ConsumptionItem } from '../types';
 import React, { useEffect, useState, useMemo } from 'react';
 import {
   BarChart3,
@@ -55,6 +57,7 @@ import { QUICK_TAGS_OPTIONS } from '../data/mockData';
 import type { RatingIconType } from '../types';
 
 interface ManagerDashboardProps {
+  onConsumptionItemsChange: (items: ConsumptionItem[]) => void;
   reviews: Review[];
   rewards: RewardOption[];
   settings: RestaurantSettings;
@@ -139,13 +142,14 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
   onClearAllReviews,
   onUpdateReviewsList,
   onSaveDatabase,
+  onConsumptionItemsChange,
   accessLevel = 'owner',
 }) => {
   const isViewer = accessLevel === 'viewer';
   const isOwner = accessLevel === 'owner' || accessLevel === 'superadmin';
   // Tabs within dashboard
   const [activeTab, setActiveTab] = useState<
-    'metrics' | 'reviews' | 'customers' | 'waiters' | 'validator' | 'rewards' | 'reports' | 'settings'
+    'items' | 'metrics' | 'reviews' | 'customers' | 'waiters' | 'validator' | 'rewards' | 'reports' | 'settings'
   >(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -154,7 +158,7 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
     return 'metrics';
   });
   useEffect(() => {
-    if (isViewer && ['waiters', 'validator', 'rewards', 'settings'].includes(activeTab)) setActiveTab('metrics');
+    if (isViewer && ['items', 'waiters', 'validator', 'rewards', 'settings'].includes(activeTab)) setActiveTab('metrics');
   }, [isViewer, activeTab]);
 
 
@@ -362,6 +366,7 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
             <td>${escapeHtml(r.criticism || '-')}</td>
             <td>${escapeHtml(r.suggestion || '-')}</td>
             <td>${escapeHtml(r.rewardTitle || '-')}</td>
+            <td>${escapeHtml((r.consumedItems || []).map(item => item.name).join(', ') || 'Não informado')}</td>
           </tr>`;
         }).join('')
       : '';
@@ -391,7 +396,7 @@ ul{padding-left:20px}li{margin:8px 0}@media print{button{display:none}body{margi
 <p>Atendimento: <strong>${reportData.avgService.toFixed(1)}</strong> · Ambiente: <strong>${reportData.avgAmbiance.toFixed(1)}</strong> · Produtos: <strong>${reportData.avgProducts.toFixed(1)}</strong> · Tempo de espera: <strong>${reportData.avgWaitTime.toFixed(1)}</strong></p>
 <h2>Destaques mais marcados</h2><ul>${reportData.tagRanking.slice(0, 8).map(([tag,c]) => `<li>${escapeHtml(tag)} — ${c}</li>`).join('') || '<li>Sem dados</li>'}</ul>
 <h2>Sugestões do sistema</h2><ul>${reportSuggestions.map((s) => `<li>${escapeHtml(s)}</li>`).join('')}</ul>
-${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th>Mesa</th><th>Cliente</th><th>Nota</th><th>Destaques</th><th>Atendente</th><th>Crítica</th><th>Sugestão</th><th>Brinde</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
+${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th>Mesa</th><th>Cliente</th><th>Nota</th><th>Destaques</th><th>Atendente</th><th>Crítica</th><th>Sugestão</th><th>Brinde</th><th>Consumiu</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
 <script>window.onload=()=>setTimeout(()=>window.print(),250)</script></body></html>`);
     popup.document.close();
   };
@@ -1272,6 +1277,10 @@ return (
           )}
         </button>
 
+        {!isViewer && <button type="button" onClick={() => setActiveTab('items')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition ${activeTab === 'items' ? 'bg-rose-600 text-white shadow-md' : 'text-stone-600 hover:bg-stone-100'}`}>
+          Itens consumidos
+        </button>}
         {!isViewer && (
         <button
           type="button"
@@ -1355,6 +1364,8 @@ return (
       </div>
 
       {/* TAB 1: METRICS */}
+      {activeTab === 'items' && !isViewer && <ConsumptionItemsManager onChange={onConsumptionItemsChange} />}
+
       {activeTab === 'metrics' && (
         <div className="space-y-6">
           {/* Top Stat Highlights */}
@@ -1871,6 +1882,10 @@ return (
                     </div>
 
                     {/* Waiter Evaluation Tag if customer evaluated individual waiter */}
+                    {(rev.consumedItems || []).length > 0 && <div className="my-3 p-3 rounded-xl bg-stone-50 border border-stone-200">
+                      <p className="text-xs font-bold text-stone-500 mb-2">O que consumiu</p>
+                      <div className="flex flex-wrap gap-2">{rev.consumedItems!.map(item => <span key={item.id} className="text-xs font-semibold bg-white border border-stone-200 rounded-lg px-2 py-1">{item.name}</span>)}</div>
+                    </div>}
                     {rev.waiterName && (
                       <div className="mb-3 p-2.5 bg-amber-50/70 border border-amber-200/70 rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs">
                         <div className="flex items-center gap-2">
