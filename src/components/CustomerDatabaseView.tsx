@@ -1562,9 +1562,6 @@ export const CustomerDatabaseView: React.FC<CustomerDatabaseViewProps> = ({
                 type="button"
                 onClick={() => {
                   setShowClearConfirmModal(false);
-                  if (onUpdateReviews) {
-                    onUpdateReviews([]);
-                  }
                   if (onClearAllCustomers) {
                     onClearAllCustomers();
                   }
@@ -1608,10 +1605,6 @@ export const CustomerDatabaseView: React.FC<CustomerDatabaseViewProps> = ({
                 type="button"
                 onClick={() => {
                   const idsToDelete = customerToDelete._evaluations.map((ev) => ev.id);
-                  if (onUpdateReviews) {
-                    const idSet = new Set(idsToDelete);
-                    onUpdateReviews(reviews.filter((r) => !idSet.has(r.id)));
-                  }
                   if (onDeleteCustomer) {
                     onDeleteCustomer(idsToDelete);
                   }

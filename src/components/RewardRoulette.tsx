@@ -5,6 +5,7 @@ import { RewardOption } from '../types';
 
 interface RewardRouletteProps {
   rewards: RewardOption[];
+  serverReward: RewardOption;
   onRewardSelected: (reward: RewardOption) => void;
   alreadySelectedReward?: RewardOption | null;
   restaurantName?: string;
@@ -229,6 +230,7 @@ class RouletteSoundEngine {
 
 export const RewardRoulette: React.FC<RewardRouletteProps> = ({
   rewards,
+  serverReward,
   onRewardSelected,
   alreadySelectedReward,
   restaurantName = 'Sr. Coxita',
@@ -288,20 +290,10 @@ export const RewardRoulette: React.FC<RewardRouletteProps> = ({
     // Start playing lively roulette music & decelerating clicks
     soundEngineRef.current?.playSpinMusic();
 
-    // Pick winner based on weights if present
-    const totalWeight = items.reduce((acc, curr) => acc + (curr.probabilityWeight || 10), 0);
-    let rand = Math.random() * totalWeight;
-    let winningIndex = 0;
-    for (let i = 0; i < items.length; i++) {
-      const w = items[i].probabilityWeight || 10;
-      if (rand <= w) {
-        winningIndex = i;
-        break;
-      }
-      rand -= w;
-    }
-
-    const winner = items[winningIndex];
+    // The server has already issued and committed this prize. This wheel only animates it.
+    const winningIndex = items.findIndex(item => item.id === serverReward.id);
+    if (winningIndex < 0) { setSpinning(false); soundEngineRef.current?.stop(); return; }
+    const winner = serverReward;
 
     // Angle calculation:
     // Pointer is at TOP (12 o'clock, 0 degrees).

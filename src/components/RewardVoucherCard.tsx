@@ -100,7 +100,7 @@ export const RewardVoucherCard: React.FC<RewardVoucherCardProps> = ({
       `Olá ${firstName}! Aqui estão os detalhes do seu brinde conquistado na avaliação:\n\n` +
       `🎁 *Brinde:* ${rewardTitle}\n` +
       `🎟️ *Código de Resgate:* ${rewardCode}\n` +
-      `📅 *Prazo de Início:* Liberado para resgate a partir de ${formattedAvailableDate} (24h após o sorteio)\n` +
+      `📅 *Prazo de Início:* Liberado para resgate a partir de ${formattedAvailableDate}\n` +
       `⏳ *Prazo para Expirar:* Válido até ${formattedExpiryDate} (15 dias de validade)\n` +
       `⚠️ *Regra Importante:* Só é válido utilizar 1 cortesia/brinde por mesa!\n\n` +
       `Apresente este voucher ao garçom no ${restaurantName} durante sua próxima visita. Esperamos você! 💛`
@@ -280,8 +280,8 @@ export const RewardVoucherCard: React.FC<RewardVoucherCardProps> = ({
           )}
 
           {/* Numeric Code */}
-          <div className="mt-3 flex items-center justify-center gap-2">
-            <span className={`font-mono text-xl font-extrabold tracking-widest px-3 py-1.5 rounded-lg border shadow-sm ${
+          <div className="mt-3 flex items-center justify-center gap-2 min-w-0">
+            <span className={`font-mono text-sm sm:text-base font-extrabold tracking-wide break-all min-w-0 px-3 py-1.5 rounded-lg border shadow-sm ${
               isClaimed
                 ? 'bg-stone-100 text-stone-400 border-stone-200 line-through'
                 : 'bg-white text-stone-800 border-stone-300'
@@ -332,7 +332,7 @@ export const RewardVoucherCard: React.FC<RewardVoucherCardProps> = ({
                   : isExpired
                   ? 'Prazo Expirado'
                   : isPending24h
-                  ? 'Carência de 24h (Próxima Visita)'
+                  ? 'Aguardando liberação'
                   : 'Pronto para Consumo!'}
               </span>
               <span
@@ -364,7 +364,7 @@ export const RewardVoucherCard: React.FC<RewardVoucherCardProps> = ({
                   ⏰ <strong>Liberado a partir de:</strong> {formattedAvailableDate} (aproximadamente {remainingHours24}h restantes).
                 </p>
                 <p className="text-[11px] leading-relaxed opacity-85">
-                  Conforme o regulamento, o brinde é ativado 24 horas após o sorteio e você tem até <strong>15 dias</strong> para saborear no restaurante!
+                  Seu brinde fica disponível em <strong>{formattedAvailableDate}</strong> e pode ser utilizado até <strong>{formattedExpiryDate}</strong>.
                 </p>
               </div>
             ) : (
@@ -380,7 +380,7 @@ export const RewardVoucherCard: React.FC<RewardVoucherCardProps> = ({
           <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
           <div className="space-y-1.5">
             <p>
-              <strong>Regulamento:</strong> <span className="text-amber-800 font-extrabold">Válido utilizar apenas 1 voucher por mesa.</span> Brinde liberado para resgate a partir de 24h após o sorteio, com prazo total de 15 dias para uso. Apresente este código ao garçom durante o atendimento no {restaurantName}.
+              <strong>Regulamento:</strong> <span className="text-amber-800 font-extrabold">Válido utilizar apenas 1 voucher por mesa.</span> Brinde liberado em {formattedAvailableDate}, válido até {formattedExpiryDate}. Apresente este código ao garçom durante o atendimento no {restaurantName}.
             </p>
             <p className="text-stone-700">
               ⚠️ <strong>Limite por Mesa:</strong> Não é cumulativo; cada mesa pode resgatar no máximo 1 cortesia por visita.

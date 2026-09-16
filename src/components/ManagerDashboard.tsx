@@ -59,14 +59,14 @@ interface ManagerDashboardProps {
   rewards: RewardOption[];
   settings: RestaurantSettings;
   waiters: Waiter[];
-  onValidateReward: (code: string) => boolean;
+  onValidateReward: (code: string) => Promise<boolean>;
   onUpdateRewards: (rewards: RewardOption[]) => void;
   onUpdateSettings: (settings: RestaurantSettings) => void;
   onUpdateWaiters: (waiters: Waiter[]) => void;
   onDeleteReview?: (id: string | string[]) => void;
   onClearAllReviews?: () => void;
   onUpdateReviewsList?: (reviews: Review[]) => void;
-  onSaveDatabase?: () => Promise<boolean> | void;
+  onSaveDatabase?: () => Promise<boolean>;
   accessLevel?: 'owner' | 'manager' | 'viewer' | 'superadmin';
 }
 
@@ -428,8 +428,8 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
     if (onSaveDatabase) {
       setIsSavingDb(true);
       try {
-        await onSaveDatabase();
-        setSaveDbStatus('Salvo!');
+        const confirmed = await onSaveDatabase();
+        setSaveDbStatus(confirmed ? 'Salvo!' : 'Erro ao salvar');
         setTimeout(() => setSaveDbStatus(null), 3500);
       } catch {
         setSaveDbStatus('Erro ao salvar');
@@ -725,8 +725,8 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
     try {
       onUpdateSettings({ ...settings });
       if (onSaveDatabase) {
-        await onSaveDatabase();
-      }
+        if (!(await onSaveDatabase())) return;
+      } else return;
       setWhatsappSavedSuccess(true);
       setTimeout(() => setWhatsappSavedSuccess(false), 5000);
     } catch {
@@ -967,7 +967,7 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
     });
   }, [reviews, filterTable, filterWaiter, searchQuery, filterRating]);
 
-  const handleValidateSubmit = (e: React.FormEvent) => {
+  const handleValidateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputCode.trim()) return;
 
@@ -991,12 +991,12 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
       return;
     }
 
-    const success = onValidateReward(code);
+    const success = await onValidateReward(code);
 
-    if (success && targetReview) {
+    if (success) {
       setValidationResult({
         success: true,
-        message: `✅ Brinde "${targetReview.rewardTitle}" validado com sucesso para ${targetReview.customerName || 'cliente'} (${targetReview.tableNumber ? `Mesa #${targetReview.tableNumber}` : 'Balcão'})! Cupom baixado (uso único).`,
+        message: '✅ Resgate confirmado pelo servidor. Voucher baixado para uso único.',
         review: targetReview,
       });
       setInputCode('');
@@ -1024,9 +1024,6 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
 
     const updated = [...rewards, newR];
     onUpdateRewards(updated);
-    if (onSaveDatabase) {
-      onSaveDatabase().catch(() => {});
-    }
     setNewRewardTitle('');
     setNewRewardDesc('');
   };
@@ -1034,18 +1031,12 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
   const handleToggleReward = (id: string) => {
     const updated = rewards.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r));
     onUpdateRewards(updated);
-    if (onSaveDatabase) {
-      onSaveDatabase().catch(() => {});
-    }
   };
 
   const handleUpdateRewardWeight = (id: string, weight: number) => {
     const validWeight = Math.max(1, Math.min(100, Math.round(weight)));
     const updated = rewards.map((r) => (r.id === id ? { ...r, probabilityWeight: validWeight } : r));
     onUpdateRewards(updated);
-    if (onSaveDatabase) {
-      onSaveDatabase().catch(() => {});
-    }
   };
 
   const handleDeleteReward = (reward: RewardOption) => {
@@ -1060,9 +1051,6 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
     if (!rewardToDelete) return;
     const updated = rewards.filter((r) => r.id !== rewardToDelete.id);
     onUpdateRewards(updated);
-    if (onSaveDatabase) {
-      onSaveDatabase().catch(() => {});
-    }
     setRewardToDelete(null);
   };
 
@@ -1189,9 +1177,6 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
           : w
       );
       onUpdateWaiters(updated);
-      if (onSaveDatabase) {
-        onSaveDatabase().catch(() => {});
-      }
     } else {
       const newW: Waiter = {
         id: `w-${Date.now()}`,
@@ -1204,9 +1189,6 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
       };
       const updated = [...waiters, newW];
       onUpdateWaiters(updated);
-      if (onSaveDatabase) {
-        onSaveDatabase().catch(() => {});
-      }
     }
     setIsWaiterModalOpen(false);
   };
@@ -1214,9 +1196,6 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
   const handleToggleWaiterActive = (id: string) => {
     const updated = waiters.map((w) => (w.id === id ? { ...w, active: !w.active } : w));
     onUpdateWaiters(updated);
-    if (onSaveDatabase) {
-      onSaveDatabase().catch(() => {});
-    }
   };
 
   const handleDeleteWaiter = (waiter: Waiter) => {
@@ -1227,9 +1206,6 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
     if (!waiterToDelete) return;
     const updated = waiters.filter((w) => w.id !== waiterToDelete.id);
     onUpdateWaiters(updated);
-    if (onSaveDatabase) {
-      onSaveDatabase().catch(() => {});
-    }
     setWaiterToDelete(null);
   };
 

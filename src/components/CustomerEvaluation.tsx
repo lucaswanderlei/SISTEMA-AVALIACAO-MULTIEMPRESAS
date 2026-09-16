@@ -1,5 +1,5 @@
 import { tenantKey, withCompanyParam } from '../lib/tenant';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Users,
   Sparkles,
@@ -23,14 +23,14 @@ import {
   X,
   MapPin,
 } from 'lucide-react';
-import { RatingCriteria, RestaurantSettings, RewardOption, Review, Waiter } from '../types';
+import { RatingCriteria, RestaurantSettings, RewardOption, Review, Waiter, PublicReviewInput } from '../types';
 import { QUICK_TAGS_OPTIONS, WAITER_COMPLIMENTS } from '../data/mockData';
 import { RatingStarScale } from './RatingStarScale';
 import { CoxinhaIcon } from './CoxinhaIcon';
 import { RatingChoiceIcon } from './RatingChoiceIcon';
 import { RewardRoulette } from './RewardRoulette';
 import { RewardVoucherCard } from './RewardVoucherCard';
-import { generateRewardCode, loadReviews } from '../lib/storage';
+import { loadReviews } from '../lib/storage';
 
 interface CustomerEvaluationProps {
   tableNumber?: number;
@@ -38,7 +38,7 @@ interface CustomerEvaluationProps {
   settings: RestaurantSettings;
   rewards: RewardOption[];
   waiters?: Waiter[];
-  onSubmitReview: (review: Review) => void;
+  onSubmitReview: (input: PublicReviewInput) => Promise<{ review: Review; reward: RewardOption }>;
 }
 
 const PRIVACY_NOTICE_VERSION = '2026-09-v1';
@@ -51,6 +51,10 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
   waiters = [],
   onSubmitReview,
 }) => {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const submittingRef = useRef(false);
+  const [serverReward, setServerReward] = useState<RewardOption | null>(null);
+  const pendingRequestRef = useRef<{ signature: string; token: string } | null>(null);
   const quickTagsOptions = (settings.quickTagsOptions || [])
     .map((tag) => String(tag || '').trim())
     .filter(Boolean);
@@ -139,7 +143,7 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
   // Check localStorage on mount for today's evaluation on this browser
   useEffect(() => {
     try {
-      const todayStr = new Date().toISOString().slice(0, 10);
+      const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
       const lastDate = localStorage.getItem(tenantKey('restaurant_last_eval_date'));
       if (lastDate === todayStr) {
         const saved = localStorage.getItem(tenantKey('restaurant_last_eval_review'));
@@ -193,8 +197,9 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
     );
   };
 
-  const handleStartSubmit = (e: React.FormEvent) => {
+  const handleStartSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submittingRef.current) return;
 
     // 0. Validate Table selection (Customer must mark which table they are sitting at)
     if (!isBalcao && selectedTable <= 0) {
@@ -249,112 +254,52 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
       return;
     }
 
-    // 5. Validate Daily Limit: Only 1 evaluation per day per customer/phone
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const allReviews = loadReviews();
-    const reviewFoundToday = allReviews.find((r) => {
-      if (!r.customerPhone) return false;
-      const rPhone = r.customerPhone.replace(/\D/g, '');
-      const rDate = r.createdAt ? new Date(r.createdAt).toISOString().slice(0, 10) : '';
-      return rPhone === phoneDigits && rDate === todayStr;
-    });
-
-    if (reviewFoundToday) {
-      setExistingTodayReview(reviewFoundToday);
-      setValidationError(
-        `⚠️ Limite diário atingido: Este número de WhatsApp (${customerPhone}) já realizou uma avaliação hoje. Para garantir a transparência das cortesias, só é permitida 1 avaliação por dia por cliente.`
-      );
-      const phoneEl = document.getElementById('input-customer-phone');
-      if (phoneEl) {
-        phoneEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        phoneEl.focus();
-      }
-      return;
-    }
-
     setValidationError(null);
     setExistingTodayReview(null);
-
-    // If wheel mode is active, proceed to spin wheel first
-    if (settings.activeRewardMode === 'wheel') {
-      setStage('roulette');
+    submittingRef.current = true;
+    setIsSubmitting(true);
+    try {
+      const payload = {
+        customerName: customerName.trim(), customerPhone: customerPhone.trim(),
+        ...(!isBalcao && selectedTable > 0 ? { tableNumber: selectedTable } : {}),
+        ratings, quickTags: selectedTags, criticism: criticism.trim(), suggestion: suggestion.trim(),
+        ...(selectedWaiterId ? { waiterId: selectedWaiterId, waiterRating, waiterCompliments } : {}),
+        privacyAcknowledged, marketingConsent: settings.marketingOptInEnabled !== false && marketingConsent,
+      };
+      const signature = JSON.stringify(payload);
+      let pending = pendingRequestRef.current;
+      if (!pending) { try { pending = JSON.parse(sessionStorage.getItem(tenantKey('pending_review_request')) || 'null'); } catch {} }
+      if (!pending || pending.signature !== signature) pending = { signature, token: crypto.randomUUID() };
+      pendingRequestRef.current = pending;
+      try { sessionStorage.setItem(tenantKey('pending_review_request'), JSON.stringify(pending)); } catch {}
+      const confirmed = await onSubmitReview({ ...payload, requestToken: pending.token });
+      const review = confirmed.review;
+      // Cache only a confirmed voucher. A reload can recover it even during the animation.
+      try {
+        const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(review.createdAt));
+        localStorage.setItem(tenantKey('restaurant_last_eval_date'), day);
+        localStorage.setItem(tenantKey('restaurant_last_eval_phone'), review.customerPhone || '');
+        localStorage.setItem(tenantKey('restaurant_last_eval_review'), JSON.stringify(review));
+        sessionStorage.removeItem(tenantKey('pending_review_request'));
+      } catch {}
+      pendingRequestRef.current = null;
+      setTodayEvaluatedReview(review);
+      setGeneratedReview(review);
+      setServerReward(confirmed.reward);
+      setStage(settings.activeRewardMode === 'wheel' ? 'roulette' : 'voucher');
       window.scrollTo({ top: 0, behavior: 'smooth' });
-    } else {
-      // Fixed reward
-      const fixed =
-        rewards.find((r) => r.id === settings.fixedRewardId && r.enabled) ||
-        rewards.find((r) => r.enabled) ||
-        rewards[0];
-      completeEvaluation(fixed);
+    } catch (error: any) {
+      setValidationError(error?.message || 'Não foi possível confirmar a avaliação. Tente novamente.');
+      // Same token is retained for a safe retry after a lost response.
+    } finally {
+      submittingRef.current = false;
+      setIsSubmitting(false);
     }
   };
 
   const handleRouletteWon = (reward: RewardOption) => {
     setSelectedReward(reward);
-    setTimeout(() => {
-      completeEvaluation(reward);
-    }, 1800);
-  };
-
-  const completeEvaluation = (reward: RewardOption) => {
-    const rewardCode = generateRewardCode();
-    const now = new Date();
-    const delayHours = settings.rewardDelayHours ?? 24;
-    const validityDays = settings.rewardValidityDays || 15;
-    const availableFrom = new Date(now.getTime() + delayHours * 60 * 60 * 1000).toISOString();
-    const expiresAt = new Date(now.getTime() + validityDays * 24 * 60 * 60 * 1000).toISOString();
-
-    const finalTable = !isBalcao && selectedTable > 0 ? selectedTable : undefined;
-
-    const newReview: Review = {
-      id: `rev-${Date.now()}`,
-      tableNumber: finalTable,
-      customerName: customerName.trim(),
-      customerPhone: customerPhone.trim(),
-      waiterId: selectedWaiterId || undefined,
-      waiterName: selectedWaiter
-        ? selectedWaiter.nickname
-          ? `${selectedWaiter.name} (${selectedWaiter.nickname})`
-          : selectedWaiter.name
-        : undefined,
-      waiterRating: selectedWaiterId && waiterRating > 0 ? waiterRating : undefined,
-      waiterCompliment:
-        selectedWaiterId && waiterCompliments.length > 0 ? waiterCompliments.join(' • ') : undefined,
-      waiterCompliments:
-        selectedWaiterId && waiterCompliments.length > 0 ? waiterCompliments : undefined,
-      ratings,
-      quickTags: selectedTags,
-      criticism: criticism.trim(),
-      suggestion: suggestion.trim(),
-      rewardCode,
-      rewardTitle: reward.title,
-      rewardClaimed: false,
-      availableFrom,
-      expiresAt,
-      whatsappStatus: 'sent_silently',
-      whatsappSentAt: now.toISOString(),
-      privacyAcceptedAt: privacyAcknowledged ? now.toISOString() : undefined,
-      privacyNoticeVersion: privacyAcknowledged ? PRIVACY_NOTICE_VERSION : undefined,
-      marketingConsent: Boolean(settings.marketingOptInEnabled !== false && marketingConsent),
-      marketingConsentAt: settings.marketingOptInEnabled !== false && marketingConsent ? now.toISOString() : undefined,
-      createdAt: now.toISOString(),
-    };
-
-    // Save today's evaluation to local device state to prevent multiple daily submissions
-    const todayStr = now.toISOString().slice(0, 10);
-    try {
-      localStorage.setItem(tenantKey('restaurant_last_eval_date'), todayStr);
-      localStorage.setItem(tenantKey('restaurant_last_eval_phone'), customerPhone.replace(/\D/g, ''));
-      localStorage.setItem(tenantKey('restaurant_last_eval_review'), JSON.stringify(newReview));
-      setTodayEvaluatedReview(newReview);
-    } catch (err) {
-      console.error('Error saving today evaluation', err);
-    }
-
-    setGeneratedReview(newReview);
-    onSubmitReview(newReview);
-    setStage('voucher');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setTimeout(() => { setStage('voucher'); window.scrollTo({ top: 0, behavior: 'smooth' }); }, 1800);
   };
 
   const handleResetForNextCustomer = () => {
@@ -372,6 +317,8 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
     setValidationError(null);
     setGeneratedReview(null);
     setSelectedReward(null);
+    setServerReward(null);
+    pendingRequestRef.current = null;
     setStage('form');
   };
 
@@ -1044,12 +991,13 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
           <div className="pt-2">
             <button
               id="btn-submit-evaluation"
+              disabled={isSubmitting}
               type="submit"
               className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-rose-600 via-rose-500 to-amber-600 hover:from-rose-700 hover:to-amber-700 text-white font-black text-lg tracking-wide shadow-xl shadow-rose-600/30 transform active:scale-[0.98] transition flex items-center justify-center gap-3 cursor-pointer"
             >
               <Gift className="w-6 h-6 animate-bounce" />
               <span>
-                {settings.activeRewardMode === 'wheel'
+                {isSubmitting ? 'Confirmando sua avaliação...' : settings.activeRewardMode === 'wheel'
                   ? 'Girar Roleta & Receber Voucher no WhatsApp'
                   : 'Cadastrar & Receber Voucher no WhatsApp'}
               </span>
@@ -1063,10 +1011,11 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
       )}
 
       {/* STAGE 2: ROULETTE */}
-      {stage === 'roulette' && (
+      {stage === 'roulette' && serverReward && (
         <div className="space-y-6">
           <RewardRoulette
-            rewards={rewards}
+            rewards={rewards.some(r => r.id === serverReward.id && r.enabled) ? rewards : [...rewards.filter(r => r.id !== serverReward.id), { ...serverReward, enabled: true }]}
+            serverReward={serverReward}
             onRewardSelected={handleRouletteWon}
             alreadySelectedReward={selectedReward}
             restaurantName={settings.name}
@@ -1088,7 +1037,7 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
               Obrigado por nos ajudar a melhorar!
             </h2>
             <p className="text-sm text-stone-600 max-w-md mx-auto">
-              Aqui está seu prêmio de cortesia! Toque no botão verde do voucher para abrir seu WhatsApp e salvar seu brinde com segurança. Liberado para consumo em 24h e válido por {settings.rewardValidityDays || 15} dias no {settings.name}.
+              Aqui está seu prêmio de cortesia! Toque no botão verde do voucher para abrir seu WhatsApp e salvar seu brinde com segurança. Consulte abaixo as datas de liberação e vencimento do seu brinde no {settings.name}.
             </p>
           </div>
 
