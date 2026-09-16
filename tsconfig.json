@@ -29,7 +29,10 @@
     "commerce-security.ts",
     "commerce-store.ts",
     "vite.config.ts",
-    "tests"
+    "tests",
+    "ai-reports.ts",
+    "ai-report-data.ts",
+    "ai-report-prompt.ts"
   ],
   "exclude": [
     "node_modules",

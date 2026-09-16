@@ -1,3 +1,4 @@
+import { initAiSchema, registerAiRoutes } from './ai-reports';
 import { CommerceError, clone, mergeDbChanges, tenantDispatches, updateConsumptionCatalog } from './commerce-security';
 import { initCommerceSchema, withCompanyTransaction, createPublicReview, redeemVoucher, consumePublicReviewRate } from './commerce-store';
 import express from 'express';
@@ -669,6 +670,7 @@ function describeAuditableMutation(req: express.Request, tenantId: string): Audi
   const currentName = tenantDbs.get(tenantId)?.settings?.name || null;
   const fields = auditSafeFields(req.body);
 
+  if (method === 'POST' && pathName === '/api/ai/reports') return { action: 'ai.report.generate', entity: 'ai_report', companyId: tenantId, companyName: currentName, summary: 'Análise Premium de IA consultada ou gerada.', details: { days: req.body?.days, refresh: req.body?.refresh === true } };
   if (method === 'PUT' && pathName === '/api/admin/dashboard/plan-prices') {
     return { action: 'platform.plan_prices.update', entity: 'platform', summary: 'Valores dos planos comerciais foram alterados.', details: { fields } };
   }
@@ -980,6 +982,7 @@ if (totalEmpresas === 0) {
 
 
   await initCommerceSchema(pool);
+  await initAiSchema(pool);
   const app = express();
   // Set only to the known number of trusted reverse proxies (Render: normally 1).
   const proxyHops = Number(process.env.TRUST_PROXY_HOPS || 0);
@@ -2076,6 +2079,8 @@ if (totalEmpresas === 0) {
       return res.status(500).json({ error: err?.message || 'Erro ao atualizar login e senha.' });
     }
   });
+
+  registerAiRoutes(app, pool, requireCompanyManager, requireCompanyEditor, currentCompanyId);
 
   // Full Central System Synchronization
   app.get('/api/sync', async (_req, res) => {
