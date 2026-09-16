@@ -16,7 +16,24 @@ export interface Waiter {
   createdAt: string;
 }
 
+export interface PublicReviewInput {
+  requestToken: string;
+  customerName?: string;
+  customerPhone: string;
+  tableNumber?: number;
+  ratings: RatingCriteria;
+  quickTags: string[];
+  criticism?: string;
+  suggestion?: string;
+  waiterId?: string;
+  waiterRating?: number;
+  waiterCompliments?: string[];
+  privacyAcknowledged: boolean;
+  marketingConsent: boolean;
+}
+
 export interface Review {
+  rewardId?: string;
   id: string;
   tableNumber?: number;
   customerName?: string;

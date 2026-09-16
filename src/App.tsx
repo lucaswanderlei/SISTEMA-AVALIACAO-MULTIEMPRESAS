@@ -1,3 +1,4 @@
+import type { PublicReviewInput } from './types';
 import { tenantKey, getCompanyId } from './lib/tenant';
 import React, { useState, useEffect, useRef } from 'react';
 import {
@@ -121,6 +122,7 @@ export default function App() {
   const [rewards, setRewards] = useState<RewardOption[]>(loadRewards);
   const [reviews, setReviews] = useState<Review[]>(loadReviews);
   const [waiters, setWaiters] = useState<Waiter[]>(loadWaiters);
+  const configWriteQueue = useRef<Promise<boolean>>(Promise.resolve(true));
   const [isServerSynced, setIsServerSynced] = useState<boolean>(true);
   const [companyAccessStatus, setCompanyAccessStatus] = useState<CompanyAccessStatus | null>(null);
   const [companyStatusChecked, setCompanyStatusChecked] = useState(false);
@@ -527,196 +529,100 @@ export default function App() {
     saveReviews(newReviews);
   };
 
+  const persistConfig = (operation: () => Promise<boolean>) => {
+    const next = configWriteQueue.current.catch(() => false).then(operation).catch(() => false);
+    configWriteQueue.current = next;
+    void next.then(ok => { if (!ok) showToast('⚠️ O servidor não confirmou a alteração. Use Salvar novamente.'); });
+    return next;
+  };
   const handleRewardsChange = (newRewards: RewardOption[]) => {
     setRewards(newRewards);
     saveRewards(newRewards);
-    apiSaveRewards(newRewards).catch(() => {});
+    return persistConfig(() => apiSaveRewards(newRewards));
   };
-
   const handleSettingsChange = (newSettings: RestaurantSettings) => {
     setSettings(newSettings);
     saveSettings(newSettings);
-
-    saveWhatsAppConfig({
-      whatsappApiUrl: newSettings.whatsappApiUrl,
-      whatsappApiToken: newSettings.whatsappApiToken,
-      whatsappCustomMessage: newSettings.whatsappCustomMessage,
-    });
-
-    apiSaveSettings(newSettings)
-      .then((ok) => {
-        if (!ok) {
-          showToast('⚠️ O PostgreSQL não confirmou o salvamento das configurações.');
-        }
-      })
-      .catch(() => {
-        showToast('⚠️ Erro ao salvar configurações no PostgreSQL.');
-      });
+    saveWhatsAppConfig({ whatsappApiUrl: newSettings.whatsappApiUrl, whatsappApiToken: newSettings.whatsappApiToken,
+      whatsappCustomMessage: newSettings.whatsappCustomMessage });
+    return persistConfig(() => apiSaveSettings(newSettings));
   };
-
   const handleWaitersChange = (newWaiters: Waiter[]) => {
     setWaiters(newWaiters);
     saveWaiters(newWaiters);
-    apiSaveWaiters(newWaiters).catch(() => {});
+    return persistConfig(() => apiSaveWaiters(newWaiters));
   };
-
-  // Force Save Complete Database (local cache + PostgreSQL server)
   const handleForceSaveDatabase = async (explicitSettings?: RestaurantSettings): Promise<boolean> => {
-    const targetSettings = explicitSettings || settings;
-    try {
-      setSettings(targetSettings);
-      saveSettings(targetSettings);
-      saveRewards(rewards);
-      saveWaiters(waiters);
-      saveReviews(reviews);
-      if (targetSettings.whatsappApiUrl || targetSettings.whatsappApiToken) {
-        apiSaveWhatsAppSettings({
-          whatsappApiUrl: targetSettings.whatsappApiUrl,
-          whatsappApiToken: targetSettings.whatsappApiToken,
-          whatsappCustomMessage: targetSettings.whatsappCustomMessage,
-          autoSendWhatsApp: targetSettings.autoSendWhatsApp,
-          autoSendMode: targetSettings.autoSendMode,
-        }).catch(() => {});
-      }
-      const res = await apiSyncPush({
-        settings: targetSettings,
-        rewards,
-        waiters,
-        reviews,
-      });
-      if (res.success) {
-        showToast('💾 Banco de dados PostgreSQL salvo com sucesso!');
-        return true;
-      } else {
-        showToast('⚠️ Erro ao salvar: ' + (res.message || 'tente novamente'));
-        return false;
-      }
-    } catch {
-      showToast('⚠️ Erro ao salvar banco de dados.');
-      return false;
-    }
+    const confirmed = await persistConfig(async () => {
+      const response = await apiSyncPush({ settings: explicitSettings || settings, rewards, waiters });
+      return response.success;
+    });
+    showToast(confirmed ? '💾 Configurações confirmadas no PostgreSQL.' : '⚠️ O servidor não confirmou o salvamento. Tente novamente.');
+    return confirmed;
   };
 
   // Add review from customer (submitted via table QR code or client device)
-  const handleSubmitReview = async (newReview: Review) => {
-    deletedReviewIdsRef.current.delete(newReview.id);
-    knownReviewIdsRef.current.add(newReview.id);
-    const updated = [newReview, ...reviews.filter((r) => r.id !== newReview.id)];
-    handleReviewsChange(updated);
-
-    // Synchronize directly with central server
-    try {
-      await apiSubmitReview(newReview);
-    } catch (err) {
-      console.warn('Central server sync notice:', err);
+  const handleSubmitReview = async (input: PublicReviewInput): Promise<{ review: Review; reward: RewardOption }> => {
+    const result = await apiSubmitReview(input);
+    if (!result.success || !result.review || !result.reward) {
+      throw new Error(result.error || 'Não foi possível confirmar a avaliação. Tente novamente.');
     }
-
-    showToast(
-      newReview.tableNumber
-        ? `Avaliação da Mesa #${newReview.tableNumber} registrada e salva com sucesso!`
-        : `Avaliação registrada e salva com sucesso!`
-    );
+    const saved = result.review;
+    deletedReviewIdsRef.current.delete(saved.id);
+    knownReviewIdsRef.current.add(saved.id);
+    setReviews(previous => {
+      const updated = [saved, ...previous.filter(r => r.id !== saved.id)];
+      saveReviews(updated);
+      return updated;
+    });
+    showToast('Avaliação confirmada e salva com sucesso!');
+    return { review: saved, reward: result.reward };
   };
 
   // Validate voucher code (waiter/manager action) - STRICT SINGLE USE ONLY
   const handleValidateReward = async (code: string): Promise<boolean> => {
     const normalized = code.trim().toUpperCase();
-    const index = reviews.findIndex(
-      (r) =>
-        r.rewardCode.toUpperCase() === normalized ||
-        r.rewardCode.replace('BRINDE-', '').toUpperCase() === normalized
-    );
-
-    if (index >= 0) {
-      const targetReview = reviews[index];
-      // STRICT SINGLE USE CHECK
-      if (targetReview.rewardClaimed) {
-        const dateStr = targetReview.claimedAt
-          ? new Date(targetReview.claimedAt).toLocaleString('pt-BR')
-          : 'anteriormente';
-        showToast(`⛔ VOUCHER DE USO ÚNICO: Este voucher já foi utilizado em ${dateStr} e não pode ser reutilizado!`);
-        return false;
-      }
-
-      // Check voucher expiration
-      const validityDays = settings.rewardValidityDays || 15;
-      const expiry = targetReview.expiresAt
-        ? new Date(targetReview.expiresAt)
-        : new Date(new Date(targetReview.createdAt).getTime() + validityDays * 24 * 60 * 60 * 1000);
-
-      if (Date.now() > expiry.getTime()) {
-        showToast(`Voucher expirado! O prazo de ${validityDays} dias encerrou em ${expiry.toLocaleDateString('pt-BR')}.`);
-        return false;
-      }
-
-      const tableUsed = currentTable > 0 ? currentTable : targetReview.tableNumber;
-      const updated = [...reviews];
-      updated[index] = {
-        ...updated[index],
-        rewardClaimed: true,
-        claimedAt: new Date().toISOString(),
-        claimedTable: tableUsed,
-      };
-      handleReviewsChange(updated);
-
-      // Validate on central server & Firebase Firestore
-      apiValidateReward(normalized, tableUsed).catch(() => {});
-      apiSyncPush({ reviews: updated }).catch(() => {});
-
-      showToast(
-        `✅ Brinde "${updated[index].rewardTitle}" validado para ${
-          updated[index].customerName || (updated[index].tableNumber ? `Mesa #${updated[index].tableNumber}` : 'o cliente')
-        }! Voucher de uso único baixado no sistema central.`
-      );
-      return true;
+    const cached = reviews.find(r => r.rewardCode.toUpperCase() === normalized || r.rewardCode.replace('BRINDE-', '').toUpperCase() === normalized);
+    const result = await apiValidateReward(cached?.rewardCode || normalized, currentTable > 0 ? currentTable : undefined);
+    if (!result.success || !result.review) {
+      showToast(result.error || 'O servidor não confirmou o resgate. Tente novamente.');
+      return false;
     }
-
-    // Try verifying on server if not present in local list
-    try {
-      const serverResult = await apiValidateReward(normalized, currentTable > 0 ? currentTable : undefined);
-      if (serverResult.success && serverResult.review) {
-        const updated = [serverResult.review, ...reviews.filter((r) => r.id !== serverResult.review!.id)];
-        handleReviewsChange(updated);
-        showToast(`✅ Brinde validado no sistema central com sucesso!`);
-        return true;
-      } else if (serverResult.error) {
-        showToast(serverResult.error);
-        return false;
-      }
-    } catch {}
-
-    showToast(`Código "${code}" não encontrado no sistema.`);
-    return false;
-  };
-
-  const handleDeleteReview = (idOrIds: string | string[]) => {
-    const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds];
-    const idSet = new Set(ids);
-
-    ids.forEach((id) => {
-      deletedReviewIdsRef.current.add(id);
-      markReviewDeleted(id);
-      knownReviewIdsRef.current.delete(id);
-      apiDeleteReview(id).catch((err) => {
-        console.warn('Central server review deletion notice:', err);
-      });
+    const saved = result.review;
+    setReviews(previous => {
+      const updated = [saved, ...previous.filter(r => r.id !== saved.id)];
+      saveReviews(updated);
+      return updated;
     });
-
-    const updated = reviews.filter((r) => !idSet.has(r.id));
-    handleReviewsChange(updated);
-    apiSyncPush({ reviews: updated }).catch(() => {});
-
-    showToast(ids.length > 1 ? 'Cadastro do cliente e histórico de avaliações excluídos.' : 'Registro de cliente/avaliação excluído com sucesso.');
+    showToast(`✅ Brinde "${saved.rewardTitle}" resgatado com confirmação do servidor.`);
+    return true;
   };
 
-  const handleClearAllReviews = () => {
+  const handleDeleteReview = async (idOrIds: string | string[]) => {
+    const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds];
+    const removed = new Set<string>();
+    for (const id of ids) {
+      if ((await apiDeleteReview(id)).success) {
+        removed.add(id);
+        deletedReviewIdsRef.current.add(id);
+        markReviewDeleted(id);
+        knownReviewIdsRef.current.delete(id);
+      }
+    }
+    setReviews(previous => {
+      const updated = previous.filter(r => !removed.has(r.id)); saveReviews(updated); return updated;
+    });
+    showToast(removed.size === ids.length ? 'Exclusão confirmada pelo servidor.' : 'Alguns registros não foram excluídos. Tente novamente.');
+  };
+
+  const handleClearAllReviews = async () => {
+    if (!(await apiClearAllReviews())) { showToast('O servidor não confirmou a exclusão. Tente novamente.'); return; }
     handleReviewsChange([]);
     knownReviewIdsRef.current.clear();
     clearAllDeletedReviewIds();
     deletedReviewIdsRef.current.clear();
-    apiClearAllReviews().catch(() => {});
     clearAllReviewsStorage();
-    showToast('Todos os registros de clientes foram limpos do sistema central.');
+    showToast('Exclusão dos registros confirmada pelo servidor.');
   };
 
   const showToast = (msg: string) => {
