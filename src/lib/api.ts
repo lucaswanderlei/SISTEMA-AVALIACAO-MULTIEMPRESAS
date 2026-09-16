@@ -1,5 +1,5 @@
 import { getCompanyId, tenantKey } from './tenant';
-import { RestaurantSettings, RewardOption, Review, Waiter } from '../types';
+import { RestaurantSettings, RewardOption, Review, Waiter, PublicReviewInput } from '../types';
 
 
 export function tenantFetch(input: RequestInfo | URL, init: RequestInit = {}) {
@@ -196,7 +196,7 @@ export async function apiFetchReviews(): Promise<Review[] | null> {
 }
 
 // Submit a new customer review to the central server
-export async function apiSubmitReview(review: Review): Promise<{ success: boolean; review?: Review; error?: string }> {
+export async function apiSubmitReview(review: PublicReviewInput): Promise<{ success: boolean; review?: Review; reward?: RewardOption; error?: string }> {
   try {
     const res = await tenantFetch('/api/reviews', {
       method: 'POST',
@@ -208,7 +208,7 @@ export async function apiSubmitReview(review: Review): Promise<{ success: boolea
       return { success: false, error: err.error };
     }
     const data = await res.json();
-    return { success: true, review: data.review };
+    return { success: true, review: data.review, reward: data.reward };
   } catch (err: any) {
     console.error('[Sync API] Error submitting review to server:', err);
     return { success: false, error: err?.message || 'Falha de conexão com o servidor' };
