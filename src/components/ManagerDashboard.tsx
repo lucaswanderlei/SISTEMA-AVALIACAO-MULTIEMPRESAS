@@ -1,3 +1,4 @@
+import { PremiumAiReport } from './PremiumAiReport';
 import { ConsumptionItemsManager } from './ConsumptionItemsManager';
 import type { ConsumptionItem } from '../types';
 import React, { useEffect, useState, useMemo } from 'react';
@@ -57,6 +58,7 @@ import { QUICK_TAGS_OPTIONS } from '../data/mockData';
 import type { RatingIconType } from '../types';
 
 interface ManagerDashboardProps {
+  companyPlan?: string;
   onConsumptionItemsChange: (items: ConsumptionItem[]) => void;
   reviews: Review[];
   rewards: RewardOption[];
@@ -143,13 +145,14 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
   onUpdateReviewsList,
   onSaveDatabase,
   onConsumptionItemsChange,
+  companyPlan,
   accessLevel = 'owner',
 }) => {
   const isViewer = accessLevel === 'viewer';
   const isOwner = accessLevel === 'owner' || accessLevel === 'superadmin';
   // Tabs within dashboard
   const [activeTab, setActiveTab] = useState<
-    'items' | 'metrics' | 'reviews' | 'customers' | 'waiters' | 'validator' | 'rewards' | 'reports' | 'settings'
+    'ai' | 'items' | 'metrics' | 'reviews' | 'customers' | 'waiters' | 'validator' | 'rewards' | 'reports' | 'settings'
   >(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -161,6 +164,8 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
     if (isViewer && ['items', 'waiters', 'validator', 'rewards', 'settings'].includes(activeTab)) setActiveTab('metrics');
   }, [isViewer, activeTab]);
 
+
+  useEffect(() => { if (companyPlan !== 'premium' && activeTab === 'ai') setActiveTab('metrics'); }, [companyPlan, activeTab]);
 
   const [reportPeriod, setReportPeriod] = useState<'today' | '7d' | '30d' | 'all'>('30d');
 
@@ -1277,6 +1282,10 @@ return (
           )}
         </button>
 
+        {companyPlan === 'premium' && <button type="button" onClick={() => setActiveTab('ai')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition ${activeTab === 'ai' ? 'bg-rose-600 text-white shadow-md' : 'text-stone-600 hover:bg-stone-100'}`}>
+          IA <span className="text-[10px] bg-amber-100 text-amber-900 rounded-full px-2 py-0.5">Premium</span>
+        </button>}
         {!isViewer && <button type="button" onClick={() => setActiveTab('items')}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition ${activeTab === 'items' ? 'bg-rose-600 text-white shadow-md' : 'text-stone-600 hover:bg-stone-100'}`}>
           Itens consumidos
@@ -1364,6 +1373,8 @@ return (
       </div>
 
       {/* TAB 1: METRICS */}
+      {activeTab === 'ai' && companyPlan === 'premium' && <PremiumAiReport canGenerate={!isViewer} />}
+
       {activeTab === 'items' && !isViewer && <ConsumptionItemsManager onChange={onConsumptionItemsChange} />}
 
       {activeTab === 'metrics' && (
