@@ -1,3 +1,5 @@
+import { CommerceError, clone, mergeDbChanges, tenantDispatches } from './commerce-security';
+import { initCommerceSchema, withCompanyTransaction, createPublicReview, redeemVoucher, consumePublicReviewRate } from './commerce-store';
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
@@ -53,8 +55,7 @@ type RateBucket = { count: number; resetAt: number };
 const authRateBuckets = new Map<string, RateBucket>();
 
 function rateLimitKey(req: express.Request, scope: string, login?: unknown): string {
-  const forwarded = String(req.header('x-forwarded-for') || '').split(',')[0].trim();
-  const ip = forwarded || req.ip || req.socket?.remoteAddress || 'unknown';
+  const ip = req.ip || req.socket?.remoteAddress || 'unknown';
   return `${scope}:${ip}:${String(login || '').trim().toLowerCase()}`;
 }
 
@@ -263,8 +264,8 @@ async function initPostgres() {
       const nextData = row.dados || {};
       nextData.settings = { ...(nextData.settings || {}), managerLogin: nextLogin };
       await pool.query(
-        'UPDATE avaliacao_empresas SET login=$2, senha_hash=$3, dados=$4::jsonb WHERE empresa_id=$1',
-        [row.empresa_id, nextLogin, nextHash, JSON.stringify(nextData)]
+        "UPDATE avaliacao_empresas SET login=$2, senha_hash=$3, dados=jsonb_set(dados, '{settings}', COALESCE(dados->'settings','{}'::jsonb) || $4::jsonb) WHERE empresa_id=$1",
+        [row.empresa_id, nextLogin, nextHash, JSON.stringify({ managerLogin: nextLogin })]
       );
       await pool.query(
         `INSERT INTO avaliacao_usuarios (id, empresa_id, nome, login, senha_hash, perfil, ativo)
@@ -565,38 +566,28 @@ async function saveDbToPostgres(db: RestaurantDb, explicitCompanyId?: string): P
     }
   }
 }
-function saveDb(_db: RestaurantDb): void {
-  const companyId = currentCompanyId();
-  // Always persist the real object stored for this tenant. `activeDb` is a Proxy and
-  // must never be serialized directly, otherwise JSON.stringify may produce `{}`.
-  const concreteDb = tenantDbs.get(companyId);
-  if (!concreteDb) {
-    console.error(`[Database] Tentativa de salvar empresa ${companyId} sem banco carregado. Salvamento ignorado para proteger os dados.`);
-    return;
-  }
-
-  // Snapshot immediately so later in-memory mutations cannot change this queued write.
-  const snapshot: RestaurantDb = JSON.parse(JSON.stringify(concreteDb));
-
-  // Em produção (Render), o disco local é efêmero. PostgreSQL é a fonte de verdade.
-  if (process.env.NODE_ENV !== 'production') {
-    try {
-      if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-      const content = JSON.stringify(snapshot, null, 2);
-      fs.writeFileSync(DB_FILE, content, 'utf-8');
-      try { fs.writeFileSync(DB_BACKUP_FILE, content, 'utf-8'); } catch {}
-    } catch (err) {
-      console.warn('[Database] Falha ao gravar cópia local de desenvolvimento:', err);
-    }
-  }
-
-  void saveDbToPostgres(snapshot, companyId).catch((err) => {
-    console.error('[PostgreSQL] Falha ao persistir alteração:', err);
+async function saveDb(_db: RestaurantDb): Promise<void> {
+  const context = tenantContext.getStore();
+  if (!context?.db || !context.baseDb) throw new Error('Contexto de persistência indisponível.');
+  const changed = clone(context.db);
+  const base = clone(context.baseDb);
+  const result = await withCompanyTransaction(pool, context.companyId, current => {
+    const merged = mergeDbChanges(base, changed, current);
+    Object.assign(current, merged);
   });
+  context.db = result.db;
+  context.baseDb = clone(result.db);
+  tenantDbs.set(context.companyId, clone(result.db));
+}
+function adoptCommittedDb(db: RestaurantDb) {
+  const context = tenantContext.getStore();
+  if (!context) return;
+  context.db = clone(db); context.baseDb = clone(db);
+  tenantDbs.set(context.companyId, clone(db));
 }
 
 // Multiempresa: cada requisição trabalha em um banco isolado pelo X-Company-Id.
-const tenantContext = new AsyncLocalStorage<{ companyId: string }>();
+const tenantContext = new AsyncLocalStorage<{ companyId: string; db?: RestaurantDb; baseDb?: RestaurantDb }>();
 const tenantDbs = new Map<string, RestaurantDb>();
 // O arquivo JSON empacotado NÃO deve virar estado ativo após um deploy.
 // Ele serve apenas para uma eventual migração inicial se o PostgreSQL estiver vazio.
@@ -874,7 +865,7 @@ function freshDb(): RestaurantDb {
   };
 }
 async function loadCompanyDb(companyId: string): Promise<RestaurantDb> {
-  if (tenantDbs.has(companyId)) return tenantDbs.get(companyId)!;
+  // Read fresh persisted state; each request receives its own isolated snapshot.
 
   const result = await pool.query(
     'SELECT dados FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1',
@@ -902,15 +893,15 @@ async function loadCompanyDb(companyId: string): Promise<RestaurantDb> {
 
 const activeDb = new Proxy({} as RestaurantDb, {
   get(_target, prop) {
-    const id = currentCompanyId();
-    let db = tenantDbs.get(id);
-    if (!db) {
-      db = freshDb();
-      tenantDbs.set(id, db);
-    }
+    const db = tenantContext.getStore()?.db;
+    if (!db) throw new Error('Empresa não carregada nesta operação.');
     return db[prop as keyof RestaurantDb];
   },
-  set(_target, prop, value) { const id=currentCompanyId(); const db=tenantDbs.get(id) || freshDb(); (db as any)[prop]=value; tenantDbs.set(id, db); return true; }
+  set(_target, prop, value) {
+    const db = tenantContext.getStore()?.db;
+    if (!db) throw new Error('Empresa não carregada nesta operação.');
+    (db as any)[prop] = value; return true;
+  }
 });
 
 async function loadAllCompaniesFromPostgres(): Promise<number> {
@@ -939,6 +930,7 @@ async function loadAllCompaniesFromPostgres(): Promise<number> {
 }
 
 interface WhatsAppDispatch {
+  companyId: string;
   id: string;
   phone: string;
   customerName: string;
@@ -952,6 +944,13 @@ interface WhatsAppDispatch {
 }
 
 const recentDispatches: WhatsAppDispatch[] = [];
+function recordDispatch(record: WhatsAppDispatch) {
+  recentDispatches.unshift(record);
+  let count = 0;
+  for (let i = 0; i < recentDispatches.length; i++) {
+    if (recentDispatches[i].companyId === record.companyId && ++count > 50) { recentDispatches.splice(i--, 1); }
+  }
+}
 
 const processedWebhookIds = new Set<string>();
 const MAX_WEBHOOK_CACHE = 500;
@@ -979,7 +978,17 @@ if (totalEmpresas === 0) {
 
 
 
+  await initCommerceSchema(pool);
   const app = express();
+  // Set only to the known number of trusted reverse proxies (Render: normally 1).
+  const proxyHops = Number(process.env.TRUST_PROXY_HOPS || 0);
+  app.set('trust proxy', Number.isInteger(proxyHops) && proxyHops > 0 ? proxyHops : false);
+  // Express 4 does not automatically catch rejected async route handlers.
+  for (const method of ['get', 'post', 'put', 'patch', 'delete'] as const) {
+    const original = (app[method] as any).bind(app);
+    (app as any)[method] = (route: any, ...handlers: any[]) => original(route, ...handlers.map(handler =>
+      (req: any, res: any, next: any) => Promise.resolve().then(() => handler(req, res, next)).catch(next)));
+  }
 
   // Define automaticamente qual empresa deve abrir quando a URL principal é
   // acessada sem ?empresa=. Priorizamos o Sr. Coxita; se o nome tiver sido
@@ -1077,8 +1086,8 @@ if (totalEmpresas === 0) {
         });
       }
 
-      await loadCompanyDb(companyId);
-      return tenantContext.run({ companyId }, next);
+      const db = clone(await loadCompanyDb(companyId));
+      return tenantContext.run({ companyId, db, baseDb: clone(db) }, next);
     } catch (err: any) {
       if (err?.code === 'COMPANY_NOT_FOUND') {
         return res.status(404).json({ error: err.message });
@@ -1560,18 +1569,18 @@ if (totalEmpresas === 0) {
     if (password) {
       await pool.query(
         `UPDATE avaliacao_empresas
-         SET nome=$2, login=$3, senha_hash=$4, dados=$5::jsonb,
+         SET nome=$2, login=$3, senha_hash=$4, dados=jsonb_set(dados, '{settings}', COALESCE(dados->'settings','{}'::jsonb) || $5::jsonb),
              plano=$6, status_assinatura=$7, vencimento_em=$8, ativo=$9, atualizado_em=NOW()
          WHERE empresa_id=$1`,
-        [id, nome, nextLogin, hashPassword(password), JSON.stringify(dados), nextPlan, nextStatus, nextExpiresAt, ativo]
+        [id, nome, nextLogin, hashPassword(password), JSON.stringify({ name: nome, managerLogin: nextLogin }), nextPlan, nextStatus, nextExpiresAt, ativo]
       );
     } else {
       await pool.query(
         `UPDATE avaliacao_empresas
-         SET nome=$2, login=$3, dados=$4::jsonb,
+         SET nome=$2, login=$3, dados=jsonb_set(dados, '{settings}', COALESCE(dados->'settings','{}'::jsonb) || $4::jsonb),
              plano=$5, status_assinatura=$6, vencimento_em=$7, ativo=$8, atualizado_em=NOW()
          WHERE empresa_id=$1`,
-        [id, nome, nextLogin, JSON.stringify(dados), nextPlan, nextStatus, nextExpiresAt, ativo]
+        [id, nome, nextLogin, JSON.stringify({ name: nome, managerLogin: nextLogin }), nextPlan, nextStatus, nextExpiresAt, ativo]
       );
     }
 
@@ -2089,7 +2098,7 @@ if (totalEmpresas === 0) {
         privacyRequests: Array.isArray(persisted.privacyRequests) ? persisted.privacyRequests : [],
       };
 
-      tenantDbs.set(companyId, db);
+      adoptCommittedDb(db);
 
       const session = getAuthSession(_req);
       const canManage = sessionCanManageCompany(_req, companyId);
@@ -2123,80 +2132,34 @@ if (totalEmpresas === 0) {
 
   // Submit New Customer Review (From Table QR Code or Client View)
   app.post('/api/reviews', async (req, res) => {
-    try {
-      const review = req.body;
-      if (!review || !review.id) {
-        return res.status(400).json({ error: 'Dados da avaliação inválidos.' });
-      }
-      if (activeDb.settings.privacyNoticeRequired !== false && !review.privacyAcceptedAt) {
-        return res.status(400).json({ error: 'Confirme a leitura do Aviso de Privacidade antes de concluir a avaliação.' });
-      }
-      if (review.marketingConsent !== true) {
-        review.marketingConsent = false;
-        delete review.marketingConsentAt;
-      }
-      if (review.customerPhone) {
-        let digits = String(review.customerPhone).replace(/\D/g, '').replace(/^0+/, '');
-        if (digits.startsWith('55') && digits.length >= 12) digits = digits.slice(2).replace(/^0+/, '');
-        if (digits.length === 10 && /^[6-9]/.test(digits.slice(2))) digits = `${digits.slice(0,2)}9${digits.slice(2)}`;
-        review.customerPhoneNormalized = digits;
-      }
-
-      // Check if review already exists
-      const existingIdx = activeDb.reviews.findIndex((r: any) => r.id === review.id);
-      const isNewReview = existingIdx < 0;
-      if (existingIdx >= 0) {
-        activeDb.reviews[existingIdx] = { ...activeDb.reviews[existingIdx], ...review };
-      } else {
-        activeDb.reviews.unshift(review);
-      }
-
-      // O envio automático silencioso é feito somente no servidor. Assim as
-      // credenciais da Meta/WhatsApp nunca precisam ser entregues ao navegador
-      // público e o endpoint genérico de envio pode permanecer protegido.
-      if (
-        isNewReview &&
-        activeDb.settings.autoSendWhatsApp &&
-        (activeDb.settings.autoSendMode || 'silent_api') === 'silent_api' &&
-        review.customerPhone &&
-        String(review.customerPhone).replace(/\D/g, '').length >= 8
-      ) {
-        try {
-          const message = buildOfficialVoucherMessage({
-            customerName: review.customerName,
-            rewardTitle: review.rewardTitle,
-            rewardCode: review.rewardCode,
-            restaurantName: activeDb.settings.name,
-            availableFrom: review.availableFrom,
-            expiresAt: review.expiresAt,
-          });
-          const result = await executeWhatsAppSend({
-            phone: review.customerPhone,
-            message,
-            customerName: review.customerName,
-            rewardTitle: review.rewardTitle,
-            rewardCode: review.rewardCode,
-            restaurantName: activeDb.settings.name,
-            templateMode: 'brinde_template',
-          });
-          review.whatsappStatus = result.success ? 'sent_silently' : 'failed';
-          review.whatsappSentAt = new Date().toISOString();
-        } catch (sendErr) {
-          console.warn('[WhatsApp] Falha no envio automático da nova avaliação:', sendErr);
-          review.whatsappStatus = 'failed';
-        }
-      }
-
-      saveDb(activeDb);
-      console.log(`[Central Sync] Nova avaliação sincronizada! Mesa #${review.tableNumber || 'Salão'} • Cliente: ${review.customerName || 'Anônimo'} • Código: ${review.rewardCode}`);
-
-      return res.json({
-        success: true,
-        review,
-      });
-    } catch (err: any) {
-      console.error('Error saving review in /api/reviews:', err);
-      return res.status(500).json({ error: err?.message || 'Erro ao processar avaliação.' });
+    const companyId = currentCompanyId();
+    if (Buffer.byteLength(JSON.stringify(req.body || {})) > 16384 || req.body?.website) {
+      throw new CommerceError(400, 'Dados da avaliação inválidos.');
+    }
+    await consumePublicReviewRate(pool, companyId, req.ip || req.socket.remoteAddress || 'unknown');
+    const result = await createPublicReview(pool, companyId, req.body);
+    adoptCommittedDb(result.db);
+    const { review, reward, replay } = result.value;
+    // Voucher is already committed. WhatsApp failure must not invalidate a prize
+    // or cause a retry to issue another one. Replays never resend automatically.
+    res.status(replay ? 200 : 201).json({ success: true, review, reward, replay });
+    if (!replay && result.db.settings.autoSendWhatsApp && (result.db.settings.autoSendMode || 'silent_api') === 'silent_api') {
+      void (async () => {
+        const outcome = await executeWhatsAppSend({
+          phone: review.customerPhone, customerName: review.customerName,
+          rewardTitle: review.rewardTitle, rewardCode: review.rewardCode,
+          restaurantName: result.db.settings.name,
+          message: buildOfficialVoucherMessage({ ...review, restaurantName: result.db.settings.name }),
+          templateMode: 'brinde_template',
+        });
+        const saved = await withCompanyTransaction(pool, companyId, db => {
+          const stored = db.reviews.find((r: any) => r.id === review.id);
+          if (!stored) return;
+          stored.whatsappStatus = outcome.success ? 'sent_silently' : 'failed';
+          if (outcome.success) stored.whatsappSentAt = new Date().toISOString();
+        });
+        tenantDbs.set(companyId, clone(saved.db));
+      })().catch(err => console.error('[WhatsApp] Envio pós-confirmação falhou:', err));
     }
   });
 
@@ -2236,7 +2199,7 @@ if (totalEmpresas === 0) {
         createdAt: new Date().toISOString(),
       };
       activeDb.privacyRequests = [request, ...(activeDb.privacyRequests || [])];
-      saveDb(activeDb);
+      await saveDb(activeDb);
       return res.status(201).json({ success: true, protocol: request.id });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Erro ao registrar solicitação de privacidade.' });
@@ -2248,7 +2211,7 @@ if (totalEmpresas === 0) {
     return res.json({ success: true, requests: rows });
   });
 
-  app.patch('/api/privacy/requests/:id', requireCompanyEditor, (req, res) => {
+  app.patch('/api/privacy/requests/:id', requireCompanyEditor, async (req, res) => {
     const id = String(req.params.id || '');
     const request = (activeDb.privacyRequests || []).find((item) => item.id === id);
     if (!request) return res.status(404).json({ error: 'Solicitação não encontrada.' });
@@ -2258,7 +2221,7 @@ if (totalEmpresas === 0) {
     request.internalNote = String(req.body?.internalNote || request.internalNote || '').trim().slice(0, 1000) || undefined;
     request.updatedAt = new Date().toISOString();
     if (status === 'completed') request.completedAt = request.completedAt || new Date().toISOString();
-    saveDb(activeDb);
+    await saveDb(activeDb);
     return res.json({ success: true, request });
   });
 
@@ -2291,7 +2254,7 @@ if (totalEmpresas === 0) {
     return res.send(JSON.stringify(payload, null, 2));
   });
 
-  app.post('/api/privacy/requests/:id/revoke-marketing', requireCompanyEditor, (req, res) => {
+  app.post('/api/privacy/requests/:id/revoke-marketing', requireCompanyEditor, async (req, res) => {
     const id = String(req.params.id || '');
     const request = (activeDb.privacyRequests || []).find((item) => item.id === id);
     if (!request) return res.status(404).json({ error: 'Solicitação não encontrada.' });
@@ -2312,13 +2275,13 @@ if (totalEmpresas === 0) {
     request.completedAt = now;
     request.updatedAt = now;
     request.result = `Consentimento promocional revogado em ${affected} avaliação(ões) vinculada(s) ao telefone informado.`;
-    saveDb(activeDb);
+    await saveDb(activeDb);
     return res.json({ success: true, affected, request, reviews: activeDb.reviews });
   });
 
   // A anonimização é deliberadamente restrita a proprietário/SuperAdmin e exige ação explícita.
   // As notas agregadas permanecem para estatísticas, enquanto nome/telefone e consentimento promocional são removidos.
-  app.post('/api/privacy/requests/:id/anonymize', requireCompanyOwner, (req, res) => {
+  app.post('/api/privacy/requests/:id/anonymize', requireCompanyOwner, async (req, res) => {
     const id = String(req.params.id || '');
     const request = (activeDb.privacyRequests || []).find((item) => item.id === id);
     if (!request) return res.status(404).json({ error: 'Solicitação não encontrada.' });
@@ -2352,68 +2315,15 @@ if (totalEmpresas === 0) {
     request.completedAt = now;
     request.updatedAt = now;
     request.result = `${affected} avaliação(ões) tiveram identificadores, dados de mesa e campos de texto livre anonimizados/removidos.`;
-    saveDb(activeDb);
+    await saveDb(activeDb);
     return res.json({ success: true, affected, request, reviews: activeDb.reviews });
   });
 
   // Validate / Claim Reward Voucher
   app.post('/api/reviews/validate', requireCompanyEditor, async (req, res) => {
-    try {
-      const { code, tableNumber } = req.body;
-      if (!code) {
-        return res.status(400).json({ error: 'Código do voucher é obrigatório.' });
-      }
-
-      const cleanCode = String(code).trim().toUpperCase();
-      const review = activeDb.reviews.find(
-        (r: any) => String(r.rewardCode || '').trim().toUpperCase() === cleanCode
-      );
-
-      if (!review) {
-        return res.status(404).json({
-          error: `Voucher "${cleanCode}" não foi localizado no sistema. Verifique o código digitado.`,
-        });
-      }
-
-      if (review.rewardClaimed) {
-        const dateStr = review.claimedAt ? new Date(review.claimedAt).toLocaleString('pt-BR') : '';
-        return res.status(400).json({
-          error: `Este brinde já foi resgatado anteriormente${dateStr ? ` em ${dateStr}` : ''}.`,
-          review,
-        });
-      }
-
-      review.rewardClaimed = true;
-      review.claimedAt = new Date().toISOString();
-      if (tableNumber) review.claimedTable = tableNumber;
-
-      saveDb(activeDb);
-      console.log(`[Central Sync] Voucher ${cleanCode} VALIDADO com sucesso para ${review.customerName || 'Cliente'}!`);
-
-      // Persist to Firestore
-      try {
-        await setDoc(
-          doc(firestoreDb, 'companies', currentCompanyId(), 'reviews', review.id),
-          {
-            rewardClaimed: true,
-            claimedAt: review.claimedAt,
-            claimedTable: review.claimedTable || null,
-          },
-          { merge: true }
-        );
-      } catch (fErr) {
-        console.warn('[Firestore Sync] Aviso ao validar no Firestore:', fErr);
-      }
-
-      return res.json({
-        success: true,
-        review,
-        reviews: activeDb.reviews,
-      });
-    } catch (err: any) {
-      console.error('Error validating voucher:', err);
-      return res.status(500).json({ error: err?.message || 'Erro ao validar voucher.' });
-    }
+    const result = await redeemVoucher(pool, currentCompanyId(), req.body?.code, req.body?.tableNumber);
+    adoptCommittedDb(result.db);
+    return res.json({ success: true, review: result.value, reviews: result.db.reviews });
   });
 
   // Delete Single Review
@@ -2425,7 +2335,7 @@ if (totalEmpresas === 0) {
       }
       const beforeCount = activeDb.reviews.length;
       activeDb.reviews = activeDb.reviews.filter((r: any) => r.id !== id);
-      saveDb(activeDb);
+      await saveDb(activeDb);
       console.log(`[Central Sync] Avaliação ${id} removida do servidor. Antes: ${beforeCount}, Agora: ${activeDb.reviews.length}`);
 
       return res.json({
@@ -2444,7 +2354,7 @@ if (totalEmpresas === 0) {
   app.delete('/api/reviews', requireCompanyEditor, async (_req, res) => {
     try {
       activeDb.reviews = [];
-      saveDb(activeDb);
+      await saveDb(activeDb);
       console.log('[Central Sync] Todas as avaliações foram limpas do servidor.');
 
       return res.json({ success: true, reviews: [] });
@@ -2511,7 +2421,7 @@ if (totalEmpresas === 0) {
   });
 
   // Dedicated PIN Update Endpoint
-  app.post('/api/settings/pin', requireCompanyEditor, (req, res) => {
+  app.post('/api/settings/pin', requireCompanyEditor, async (req, res) => {
     try {
       const { pin } = req.body || {};
       if (!pin || typeof pin !== 'string' || pin.trim().length < 3) {
@@ -2519,8 +2429,8 @@ if (totalEmpresas === 0) {
       }
       const trimmedPin = pin.trim();
       activeDb.settings.managerPin = trimmedPin;
-      saveDb(activeDb);
-      console.log(`[Database] Senha de acesso do restaurante atualizada e salva permanentemente: ${trimmedPin}`);
+      await saveDb(activeDb);
+      console.log('[Database] PIN atualizado com persistência confirmada.');
       return res.json({ success: true, managerPin: trimmedPin });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Erro ao atualizar senha no servidor.' });
@@ -2528,7 +2438,7 @@ if (totalEmpresas === 0) {
   });
 
   // Dedicated WhatsApp API Settings Update Endpoint
-  app.post('/api/settings/whatsapp', requireCompanyEditor, (req, res) => {
+  app.post('/api/settings/whatsapp', requireCompanyEditor, async (req, res) => {
     try {
       const { whatsappApiUrl, whatsappApiToken, whatsappCustomMessage, autoSendWhatsApp, autoSendMode } = req.body || {};
       if (whatsappApiUrl !== undefined) {
@@ -2562,7 +2472,7 @@ if (totalEmpresas === 0) {
       if (autoSendMode !== undefined) {
         activeDb.settings.autoSendMode = autoSendMode;
       }
-      saveDb(activeDb);
+      await saveDb(activeDb);
       console.log(`[Database] Configurações de WhatsApp salvas no banco com sucesso (URL: ${activeDb.settings.whatsappApiUrl || 'nenhuma'})`);
       return res.json({ success: true, settings: activeDb.settings });
     } catch (err: any) {
@@ -2644,9 +2554,8 @@ if (totalEmpresas === 0) {
             : (currentData.settings || {}),
         rewards: Array.isArray(rewards) ? rewards : (Array.isArray(currentData.rewards) ? currentData.rewards : []),
         waiters: Array.isArray(waiters) ? waiters : (Array.isArray(currentData.waiters) ? currentData.waiters : []),
-        reviews: Array.isArray(reviews)
-          ? [...reviews].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-          : (Array.isArray(currentData.reviews) ? currentData.reviews : []),
+        // Reviews/voucher state only change through their dedicated server routes.
+        reviews: Array.isArray(currentData.reviews) ? currentData.reviews : [],
       };
 
       const result = await client.query(
@@ -2784,8 +2693,8 @@ if (totalEmpresas === 0) {
         reviews: data.reviews,
         privacyRequests: Array.isArray(data.privacyRequests) ? data.privacyRequests : [],
       };
-      tenantDbs.set(companyId, restoredDb);
       await saveDbToPostgres(restoredDb, companyId);
+      adoptCommittedDb(restoredDb);
       return res.json({ success: true, message: 'Backup restaurado com sucesso.', db: restoredDb });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Erro ao restaurar backup.' });
@@ -3103,6 +3012,7 @@ Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos voc
     }
 
     const record: WhatsAppDispatch = {
+      companyId: currentCompanyId(),
       id: `disp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       phone: phoneWithDDI,
       customerName: customerName || 'Cliente',
@@ -3115,8 +3025,7 @@ Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos voc
       error: errorMessage,
     };
 
-    recentDispatches.unshift(record);
-    if (recentDispatches.length > 50) recentDispatches.pop();
+    recordDispatch(record);
 
     return {
       success: deliveryStatus === 'delivered',
@@ -3217,7 +3126,7 @@ Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos voc
     }
 
     if (hasChanges) {
-      saveDb(activeDb);
+      await saveDb(activeDb);
     }
 
     return { sent5DaysCount, sent1DayCount };
@@ -3442,7 +3351,7 @@ Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos voc
   app.get('/api/whatsapp-dispatches', requireCompanyManager, (_req, res) => {
     res.json({
       configuredGateway: Boolean(process.env.WHATSAPP_API_URL),
-      dispatches: recentDispatches,
+      dispatches: tenantDispatches(recentDispatches, currentCompanyId()),
     });
   });
 
@@ -3473,7 +3382,7 @@ Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos voc
           if (!value || !value.messages) continue;
 
           for (const msg of value.messages) {
-            const msgId = msg?.id;
+            const msgId = msg?.id ? `${currentCompanyId()}:${msg.id}` : null;
             if (!msgId) continue;
 
             if (processedWebhookIds.has(msgId)) continue;
@@ -3517,9 +3426,10 @@ Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos voc
               review.rewardSentViaWhatsapp = true;
               review.whatsappStatus = 'delivered';
               review.whatsappSentAt = new Date().toISOString();
-              saveDb(activeDb);
+              await saveDb(activeDb);
 
               const record: WhatsAppDispatch = {
+      companyId: currentCompanyId(),
                 id: `disp_webhook_${Date.now()}`,
                 phone: normalizedPhone,
                 customerName: review.customerName || 'Cliente',
@@ -3530,8 +3440,7 @@ Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos voc
                 status: 'delivered',
                 gateway: effectiveApiUrl,
               };
-              recentDispatches.unshift(record);
-              if (recentDispatches.length > 50) recentDispatches.pop();
+              recordDispatch(record);
               console.log(`[Webhook] Brinde enviado para +${normalizedPhone} após SIM de ${review.customerName || 'cliente'}`);
             } else {
               console.warn(`[Webhook] Falha ao enviar brinde após SIM: ${sendResult.error}`);
@@ -3564,6 +3473,9 @@ Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos voc
     for (const companyId of companyIds) {
       try {
         await tenantContext.run({ companyId }, async () => {
+          const context = tenantContext.getStore()!;
+          context.db = clone(await loadCompanyDb(companyId));
+          context.baseDb = clone(context.db);
           await checkAndSendExpiringNotifications(true);
         });
       } catch (e) {
@@ -3580,6 +3492,15 @@ Apresente este voucher durante sua próxima visita ao {{empresa}}. Esperamos voc
     runExpirationChecksForAllCompanies().catch((e) => console.warn('[Auto Expiration Check] Notice:', e));
   }, 30 * 60 * 1000);
 
+  app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    if (res.headersSent) return;
+    if (err instanceof CommerceError) {
+      if (err.status === 429) res.setHeader('Retry-After', '600');
+      return res.status(err.status).json({ success: false, error: err.message, code: err.code });
+    }
+    console.error('[API] Operação não confirmada:', err);
+    return res.status(503).json({ success: false, error: 'Não foi possível confirmar a operação. Tente novamente.', code: 'PERSISTENCE_UNAVAILABLE' });
+  });
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
