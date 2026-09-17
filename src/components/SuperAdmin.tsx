@@ -1,3 +1,4 @@
+import { BillingAdmin } from './BillingAdmin';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
@@ -606,9 +607,11 @@ export function SuperAdmin() {
             </div>
           </div>
 
+          <BillingAdmin token={token} />
+
           <div className="bg-white rounded-2xl border border-stone-200 p-5">
             <h2 className="font-black text-stone-900 flex items-center gap-2"><DollarSign className="w-5 h-5" />Valores dos planos</h2>
-            <p className="text-xs text-stone-500 mt-1 mb-4">Defina o valor mensal para calcular o MRR estimado.</p>
+            <p className="text-xs text-stone-500 mt-1 mb-4">Defina o valor mensal usado nas novas contratações e no MRR estimado.</p>
             <div className="space-y-3">
               {(['basic', 'pro', 'premium'] as SubscriptionPlan[]).map((plan) => (
                 <label key={plan} className="block">

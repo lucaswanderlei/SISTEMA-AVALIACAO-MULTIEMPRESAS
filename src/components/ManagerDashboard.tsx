@@ -1282,6 +1282,7 @@ return (
           )}
         </button>
 
+        {isOwner && <a href={withCompanyParam('/assinatura')} className="flex items-center px-4 py-2.5 rounded-xl text-xs font-bold text-rose-700 bg-rose-50">Minha assinatura</a>}
         {companyPlan === 'premium' && <button type="button" onClick={() => setActiveTab('ai')}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition ${activeTab === 'ai' ? 'bg-rose-600 text-white shadow-md' : 'text-stone-600 hover:bg-stone-100'}`}>
           IA <span className="text-[10px] bg-amber-100 text-amber-900 rounded-full px-2 py-0.5">Premium</span>
