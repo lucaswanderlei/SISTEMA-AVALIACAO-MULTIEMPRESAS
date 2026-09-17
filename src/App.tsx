@@ -1,3 +1,4 @@
+import { BillingPage } from './components/BillingPage';
 import type { PublicReviewInput } from './types';
 import { tenantKey, getCompanyId } from './lib/tenant';
 import React, { useState, useEffect, useRef } from 'react';
@@ -91,6 +92,7 @@ export default function App() {
     if (cleanPath === '/super-admin') return <SuperAdmin />;
     if (cleanPath === '/privacidade') return <LegalPage kind="privacy" />;
     if (cleanPath === '/termos') return <LegalPage kind="terms" />;
+    if (cleanPath === '/assinatura') return <BillingPage />;
     if (cleanPath === '/acesso') return <AccessPortal />;
 
     // app.avaliaeganha.com.br sem empresa/QR é o portal geral de acesso.
@@ -656,6 +658,7 @@ export default function App() {
           <p className="text-xs font-bold text-rose-600 mt-2">Vencimento: {blockedExpiry}</p>
         )}
       </div>
+      <a className="inline-block bg-rose-700 text-white px-5 py-3 rounded-xl font-bold" href={`/assinatura?empresa=${encodeURIComponent(getCompanyId())}`}>Gerenciar assinatura</a>
       <p className="text-[11px] text-stone-400">Se você é responsável pelo estabelecimento, use o acesso da Gerência ou entre em contato com o suporte da plataforma.</p>
     </div>
   );
