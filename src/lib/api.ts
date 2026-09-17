@@ -12,12 +12,12 @@ export function tenantFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   return fetch(input, { ...init, headers });
 }
 
-export async function apiManagerLogin(login: string, password: string): Promise<{ success: boolean; token?: string; role?: string; accessLevel?: 'owner' | 'manager' | 'viewer'; userId?: string; userName?: string; error?: string }> {
+export async function apiManagerLogin(login: string, password: string, billingOnly = false): Promise<{ success: boolean; token?: string; role?: string; accessLevel?: 'owner' | 'manager' | 'viewer'; userId?: string; userName?: string; error?: string }> {
   try {
     const res = await tenantFetch('/api/auth/manager', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ login, password }),
+      body: JSON.stringify({ login, password, billingOnly }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { success: false, error: data.error || 'Login ou senha inválidos.' };
