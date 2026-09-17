@@ -123,6 +123,45 @@ function isValidEmail(value: unknown): boolean {
   return !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+function digitsOnly(value: unknown): string {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function isValidCpf(value: unknown): boolean {
+  const cpf = digitsOnly(value);
+  if (!/^\d{11}$/.test(cpf) || /^(\d)\1{10}$/.test(cpf)) return false;
+  const digit = (length: number) => {
+    const sum = cpf.slice(0, length).split('').reduce((total, current, index) => total + Number(current) * (length + 1 - index), 0);
+    const rest = (sum * 10) % 11;
+    return rest === 10 ? 0 : rest;
+  };
+  return digit(9) === Number(cpf[9]) && digit(10) === Number(cpf[10]);
+}
+
+function isValidCnpj(value: unknown): boolean {
+  const cnpj = digitsOnly(value);
+  if (!/^\d{14}$/.test(cnpj) || /^(\d)\1{13}$/.test(cnpj)) return false;
+  const check = (base: string, weights: number[]) => {
+    const sum = base.split('').reduce((total, current, index) => total + Number(current) * weights[index], 0);
+    const rest = sum % 11;
+    return rest < 2 ? 0 : 11 - rest;
+  };
+  return check(cnpj.slice(0, 12), [5,4,3,2,9,8,7,6,5,4,3,2]) === Number(cnpj[12])
+    && check(cnpj.slice(0, 13), [6,5,4,3,2,9,8,7,6,5,4,3,2]) === Number(cnpj[13]);
+}
+
+function validBillingDocument(value: unknown): { value: string; type: 'CPF' | 'CNPJ' } | null {
+  const document = digitsOnly(value);
+  if (isValidCpf(document)) return { value: document, type: 'CPF' };
+  if (isValidCnpj(document)) return { value: document, type: 'CNPJ' };
+  return null;
+}
+
+function makeAvailableCompanyId(name: string): string {
+  const base = normalizeCompanyId(name).slice(0, 42);
+  return `${base === 'demo' ? 'empresa' : base}-${crypto.randomBytes(3).toString('hex')}`;
+}
+
 function passwordResetTokenHash(token: string): string {
   return crypto.createHash('sha256').update(String(token)).digest('hex');
 }
@@ -188,7 +227,13 @@ async function initPostgres() {
     await pool.query(`ALTER TABLE avaliacao_empresas ADD COLUMN IF NOT EXISTS plano TEXT NOT NULL DEFAULT 'pro';`);
     await pool.query(`ALTER TABLE avaliacao_empresas ADD COLUMN IF NOT EXISTS status_assinatura TEXT NOT NULL DEFAULT 'active';`);
     await pool.query(`ALTER TABLE avaliacao_empresas ADD COLUMN IF NOT EXISTS vencimento_em TIMESTAMPTZ;`);
+    await pool.query(`ALTER TABLE avaliacao_empresas ADD COLUMN IF NOT EXISTS titular_nome TEXT;`);
+    await pool.query(`ALTER TABLE avaliacao_empresas ADD COLUMN IF NOT EXISTS email_cobranca TEXT;`);
+    await pool.query(`ALTER TABLE avaliacao_empresas ADD COLUMN IF NOT EXISTS telefone_cobranca TEXT;`);
+    await pool.query(`ALTER TABLE avaliacao_empresas ADD COLUMN IF NOT EXISTS documento_cobranca TEXT;`);
+    await pool.query(`ALTER TABLE avaliacao_empresas ADD COLUMN IF NOT EXISTS tipo_documento_cobranca TEXT;`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS avaliacao_empresas_login_lower_idx ON avaliacao_empresas (LOWER(login)) WHERE login IS NOT NULL;`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS avaliacao_empresas_documento_cobranca_idx ON avaliacao_empresas (documento_cobranca) WHERE documento_cobranca IS NOT NULL;`);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS avaliacao_usuarios (
         id TEXT PRIMARY KEY,
@@ -1030,10 +1075,11 @@ if (totalEmpresas === 0) {
     if (!req.path.startsWith('/api/')) {
       const superPath = req.path.replace(/\/$/, '');
       const isSuperAdminPage = superPath === '/superadmin' || superPath === '/super-admin';
+      const isAccessPortalPage = superPath === '' || superPath === '/acesso';
 
       // Ao abrir a URL principal (ou /gerencia) sem empresa, acrescenta
       // automaticamente ?empresa=<Sr. Coxita>, preservando os demais parâmetros.
-      if (!requestedCompany && !isSuperAdminPage) {
+      if (!requestedCompany && !isSuperAdminPage && !isAccessPortalPage) {
         try {
           const defaultCompanyId = await getDefaultPublicCompanyId();
           if (defaultCompanyId) {
@@ -1067,7 +1113,7 @@ if (totalEmpresas === 0) {
     // These routes need to identify the tenant but must remain reachable even
     // when the subscription is suspended/expired. This is necessary so the UI
     // can show the correct message and so the SuperAdmin can still authenticate.
-    if (req.path === '/api/company/status' || req.path === '/api/auth/portal-login' || req.path === '/api/auth/manager' || req.path === '/api/auth/forgot-password' || req.path === '/api/auth/reset-password') {
+    if (req.path === '/api/company/status' || req.path === '/api/auth/register' || req.path === '/api/auth/portal-login' || req.path === '/api/auth/manager' || req.path === '/api/auth/forgot-password' || req.path === '/api/auth/reset-password') {
       return tenantContext.run({ companyId }, next);
     }
 
@@ -1694,6 +1740,83 @@ if (totalEmpresas === 0) {
   // app.avaliaeganha.com.br, sem precisar conhecer o slug da empresa.
   // O login é procurado globalmente, mas a sessão gerada continua vinculada a
   // uma única empresa e todas as rotas privadas mantêm o isolamento por tenant.
+  app.post('/api/auth/register', async (req, res) => {
+    try {
+      const fullName = String(req.body?.fullName || '').trim().replace(/\s+/g, ' ');
+      const companyName = String(req.body?.companyName || '').trim().replace(/\s+/g, ' ');
+      const email = String(req.body?.email || '').trim().toLowerCase();
+      const phone = digitsOnly(req.body?.phone);
+      const password = String(req.body?.password || '');
+      const billingDocument = validBillingDocument(req.body?.document);
+      const signupLimit = consumeRateLimit(rateLimitKey(req, 'public-signup'), 3, 60 * 60 * 1000);
+      if (!signupLimit.allowed) {
+        res.setHeader('Retry-After', String(signupLimit.retryAfterSeconds));
+        return res.status(429).json({ error: 'Muitos cadastros a partir desta conexão. Aguarde um pouco e tente novamente.' });
+      }
+      if (fullName.length < 5 || fullName.length > 140 || fullName.split(' ').length < 2) return res.status(400).json({ error: 'Informe seu nome completo.' });
+      if (companyName.length < 2 || companyName.length > 140) return res.status(400).json({ error: 'Informe o nome da empresa.' });
+      if (!isValidEmail(email)) return res.status(400).json({ error: 'Informe um e-mail válido.' });
+      if (!billingDocument) return res.status(400).json({ error: 'Informe um CPF ou CNPJ válido.' });
+      if (phone.length < 10 || phone.length > 11) return res.status(400).json({ error: 'Informe um telefone com DDD válido.' });
+      if (password.length < 8 || password.length > 128) return res.status(400).json({ error: 'A senha deve ter entre 8 e 128 caracteres.' });
+
+      const duplicateEmail = await pool.query('SELECT empresa_id FROM avaliacao_usuarios WHERE LOWER(email)=LOWER($1) LIMIT 1', [email]);
+      if (duplicateEmail.rows[0]) return res.status(409).json({ error: 'Este e-mail já possui uma conta. Entre no sistema ou recupere sua senha.' });
+      const duplicateDocument = await pool.query('SELECT empresa_id FROM avaliacao_empresas WHERE documento_cobranca=$1 LIMIT 1', [billingDocument.value]);
+      if (duplicateDocument.rows[0]) return res.status(409).json({ error: 'Este CPF ou CNPJ já está cadastrado. Entre no sistema ou fale com o suporte.' });
+
+      let empresaId = makeAvailableCompanyId(companyName);
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        const exists = await pool.query('SELECT empresa_id FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1', [empresaId]);
+        if (!exists.rows[0]) break;
+        empresaId = makeAvailableCompanyId(companyName);
+      }
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      const db = freshDb();
+      db.settings.name = companyName;
+      (db.settings as any).managerLogin = email;
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(
+          `INSERT INTO avaliacao_empresas
+            (empresa_id,nome,slug,ativo,dados,login,senha_hash,plano,status_assinatura,vencimento_em,titular_nome,email_cobranca,telefone_cobranca,documento_cobranca,tipo_documento_cobranca)
+           VALUES ($1,$2,$1,TRUE,$3::jsonb,$4,$5,'pro','trial',$6,$7,$8,$9,$10,$11)`,
+          [empresaId, companyName, JSON.stringify(db), email, hashPassword(password), expiresAt, fullName, email, phone, billingDocument.value, billingDocument.type]
+        );
+        await client.query(
+          `INSERT INTO avaliacao_usuarios (id,empresa_id,nome,login,email,senha_hash,perfil,ativo)
+           VALUES ($1,$2,$3,$4,$5,$6,'owner',TRUE)`,
+          [`owner:${empresaId}`, empresaId, fullName, email, email, hashPassword(password)]
+        );
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK');
+        if (String((error as any)?.code) === '23505') return res.status(409).json({ error: 'Não foi possível concluir porque este e-mail, documento ou empresa já está cadastrado.' });
+        throw error;
+      } finally {
+        client.release();
+      }
+
+      tenantDbs.set(empresaId, db);
+      const token = createAuthSession({ role: 'manager', companyId: empresaId, userId: `owner:${empresaId}`, userName: fullName, accessLevel: 'owner' });
+      return res.status(201).json({
+        success: true,
+        token,
+        role: 'manager',
+        companyId: empresaId,
+        userName: fullName,
+        accessLevel: 'owner',
+        trialEndsAt: expiresAt,
+        redirect: `/gerencia?empresa=${encodeURIComponent(empresaId)}`,
+      });
+    } catch (err: any) {
+      console.error('[Cadastro público]', err);
+      return res.status(500).json({ error: 'Não foi possível concluir o cadastro agora. Tente novamente.' });
+    }
+  });
+
   app.post('/api/auth/portal-login', async (req, res) => {
     try {
       const login = String(req.body?.login || '').trim().toLowerCase();

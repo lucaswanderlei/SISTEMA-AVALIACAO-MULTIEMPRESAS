@@ -65,9 +65,13 @@ export async function prepareOrder(pool:any, companyId:string, input:any, prices
     if(recent.rows[0].n>=10)throw new CommerceError(429,'Limite diário de novas cobranças atingido.');
     const id=crypto.randomUUID();const amount=price.amount/100;
     const common={external_reference:id};
-    const body=method==='pix'?{...common,transaction_amount:amount,description:`Avalia e Ganha • ${plan} • ${cycle==='annual'?'anual':'mensal'}`,payment_method_id:'pix',payer:{email},date_of_expiration:new Date(Date.now()+30*60*1000).toISOString(),notification_url:`${base}/api/billing/webhook?source_news=webhooks`}
-      :{...common,reason:`Avalia e Ganha • ${plan} • ${cycle==='annual'?'anual':'mensal'}`,payer_email:email,auto_recurring:{frequency:price.months,frequency_type:'months',transaction_amount:amount,currency_id:'BRL',...(company.vencimento_em&&new Date(company.vencimento_em).getTime()>Date.now()+3600000?{start_date:new Date(company.vencimento_em).toISOString()}: {})},back_url:`${base}/assinatura?empresa=${encodeURIComponent(companyId)}`,status:'pending'};
-    return (await c.query(`INSERT INTO avaliacao_billing_orders(id,company_id,plan,cycle,method,amount,months,payer_email,request_body) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb) RETURNING *`,[id,companyId,plan,cycle,method,price.amount,price.months,email,JSON.stringify(body)])).rows[0];
+    const billingEmail=String(company.email_cobranca||email).trim().toLowerCase();
+    const document=String(company.documento_cobranca||'').replace(/\D/g,'');
+    const documentType=String(company.tipo_documento_cobranca||'').toUpperCase();
+    const payer={email:billingEmail,...((documentType==='CPF'||documentType==='CNPJ')&&document?{identification:{type:documentType,number:document}}:{})};
+    const body=method==='pix'?{...common,transaction_amount:amount,description:`Avalia e Ganha • ${plan} • ${cycle==='annual'?'anual':'mensal'}`,payment_method_id:'pix',payer,date_of_expiration:new Date(Date.now()+30*60*1000).toISOString(),notification_url:`${base}/api/billing/webhook?source_news=webhooks`}
+      :{...common,reason:`Avalia e Ganha • ${plan} • ${cycle==='annual'?'anual':'mensal'}`,payer_email:billingEmail,auto_recurring:{frequency:price.months,frequency_type:'months',transaction_amount:amount,currency_id:'BRL',...(company.vencimento_em&&new Date(company.vencimento_em).getTime()>Date.now()+3600000?{start_date:new Date(company.vencimento_em).toISOString()}: {})},back_url:`${base}/assinatura?empresa=${encodeURIComponent(companyId)}`,status:'pending'};
+    return (await c.query(`INSERT INTO avaliacao_billing_orders(id,company_id,plan,cycle,method,amount,months,payer_email,request_body) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb) RETURNING *`,[id,companyId,plan,cycle,method,price.amount,price.months,billingEmail,JSON.stringify(body)])).rows[0];
   });
 }
 export async function createRemote(pool:any,order:any,api:MpApi=mpApi) {
@@ -180,7 +184,7 @@ export function registerBillingRoutes(app:any,pool:any,owner:any,superAdmin:any,
   });
   app.get('/api/billing',owner,async(_req:any,res:any)=>{
     const id=companyId();const d=await discount(pool);const p=await prices();
-    const company=(await pool.query('SELECT empresa_id,nome,plano,ativo,status_assinatura,vencimento_em FROM avaliacao_empresas WHERE empresa_id=$1',[id])).rows[0];
+    const company=(await pool.query('SELECT empresa_id,nome,plano,ativo,status_assinatura,vencimento_em,email_cobranca,telefone_cobranca,documento_cobranca,tipo_documento_cobranca FROM avaliacao_empresas WHERE empresa_id=$1',[id])).rows[0];
     const orders=(await pool.query('SELECT * FROM avaliacao_billing_orders WHERE company_id=$1 ORDER BY created_at DESC LIMIT 30',[id])).rows.map(publicOrder);
     const payments=(await pool.query('SELECT p.id,p.status,p.amount,p.refunded,p.paid_at,p.granted_until,o.plan,o.cycle FROM avaliacao_billing_payments p JOIN avaliacao_billing_orders o ON o.id=p.order_id WHERE o.company_id=$1 ORDER BY p.created_at DESC LIMIT 100',[id])).rows;
     const offers=PLANS.map(plan=>{try{return {plan,monthly:quote(p,plan,'monthly',d).amount,annual:quote(p,plan,'annual',d).amount};}catch{return {plan,monthly:0,annual:0};}});
