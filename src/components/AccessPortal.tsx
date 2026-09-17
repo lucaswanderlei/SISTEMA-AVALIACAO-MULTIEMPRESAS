@@ -18,7 +18,9 @@ export function AccessPortal() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [mode, setMode] = useState<'login' | 'register'>(() => {
+    try { return new URLSearchParams(window.location.search).get('cadastro') === '1' ? 'register' : 'login'; } catch { return 'login'; }
+  });
   const [fullName, setFullName] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [document, setDocument] = useState('');
