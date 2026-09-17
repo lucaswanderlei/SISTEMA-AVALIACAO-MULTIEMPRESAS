@@ -32,7 +32,9 @@
     "tests",
     "ai-reports.ts",
     "ai-report-data.ts",
-    "ai-report-prompt.ts"
+    "ai-report-prompt.ts",
+    "billing.ts",
+    "billing-core.ts"
   ],
   "exclude": [
     "node_modules",

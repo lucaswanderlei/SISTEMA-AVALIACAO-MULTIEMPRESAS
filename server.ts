@@ -1,3 +1,4 @@
+import { initBillingSchema, registerBillingRoutes, startBillingWorker } from './billing';
 import { initAiSchema, registerAiRoutes } from './ai-reports';
 import { CommerceError, clone, mergeDbChanges, tenantDispatches, updateConsumptionCatalog } from './commerce-security';
 import { initCommerceSchema, withCompanyTransaction, createPublicReview, redeemVoucher, consumePublicReviewRate } from './commerce-store';
@@ -670,6 +671,8 @@ function describeAuditableMutation(req: express.Request, tenantId: string): Audi
   const currentName = tenantDbs.get(tenantId)?.settings?.name || null;
   const fields = auditSafeFields(req.body);
 
+  if (method === 'PUT' && pathName === '/api/admin/billing') return { action:'billing.discount.update', entity:'platform', summary:'Desconto anual atualizado.', details:{annualDiscountPercent:req.body?.annualDiscountPercent} };
+  if (method === 'POST' && pathName.startsWith('/api/billing/orders')) return { action:'billing.order.action', entity:'billing', companyId:tenantId, companyName:currentName, summary:'Operação de assinatura solicitada.', details:{path:pathName,plan:req.body?.plan,cycle:req.body?.cycle,method:req.body?.method} };
   if (method === 'POST' && pathName === '/api/ai/reports') return { action: 'ai.report.generate', entity: 'ai_report', companyId: tenantId, companyName: currentName, summary: 'Análise Premium de IA consultada ou gerada.', details: { days: req.body?.days, refresh: req.body?.refresh === true } };
   if (method === 'PUT' && pathName === '/api/admin/dashboard/plan-prices') {
     return { action: 'platform.plan_prices.update', entity: 'platform', summary: 'Valores dos planos comerciais foram alterados.', details: { fields } };
@@ -983,6 +986,7 @@ if (totalEmpresas === 0) {
 
   await initCommerceSchema(pool);
   await initAiSchema(pool);
+  await initBillingSchema(pool);
   const app = express();
   // Set only to the known number of trusted reverse proxies (Render: normally 1).
   const proxyHops = Number(process.env.TRUST_PROXY_HOPS || 0);
@@ -1027,18 +1031,9 @@ if (totalEmpresas === 0) {
       const superPath = req.path.replace(/\/$/, '');
       const isSuperAdminPage = superPath === '/superadmin' || superPath === '/super-admin';
 
-      // A URL principal (e páginas institucionais) sem nenhum parâmetro deve
-      // cair na tela de login (AccessPortal) do lado do cliente, não em uma
-      // empresa específica. Só preenchemos ?empresa= automaticamente quando a
-      // URL já indica claramente uma avaliação/QR antigo (mesa, cliente ou
-      // origem=qrcode) ou um acesso de gerência legado (gerencia=1), mas
-      // faltou o parâmetro empresa — mantendo QR Codes impressos antigos
-      // funcionando sem forçar a raiz do domínio para uma empresa fixa.
-      const isNoContextPage = superPath === '' || superPath === '/acesso' || superPath === '/privacidade' || superPath === '/termos';
-      const hasLegacyEvaluationContext = Boolean(
-        req.query.mesa || req.query.cliente || req.query.origem === 'qrcode' || req.query.gerencia === '1'
-      );
-      if (!requestedCompany && !isSuperAdminPage && !isNoContextPage && hasLegacyEvaluationContext) {
+      // Ao abrir a URL principal (ou /gerencia) sem empresa, acrescenta
+      // automaticamente ?empresa=<Sr. Coxita>, preservando os demais parâmetros.
+      if (!requestedCompany && !isSuperAdminPage) {
         try {
           const defaultCompanyId = await getDefaultPublicCompanyId();
           if (defaultCompanyId) {
@@ -1065,7 +1060,7 @@ if (totalEmpresas === 0) {
     const companyId = normalizeCompanyId(requestedCompany || 'demo');
 
     // Super Admin and health do not depend on a tenant DB being loaded.
-    if (req.path.startsWith('/api/admin/') || req.path === '/api/health') {
+    if (req.path.startsWith('/api/admin/') || req.path === '/api/health' || req.path.startsWith('/api/billing')) {
       return tenantContext.run({ companyId }, next);
     }
 
@@ -1648,11 +1643,15 @@ if (totalEmpresas === 0) {
     );
     if (!exists.rows[0]) return res.status(404).json({ error: 'Empresa não encontrada.' });
 
+    if ((await pool.query('SELECT id FROM avaliacao_billing_orders WHERE company_id=$1 LIMIT 1', [id])).rows.length) return res.status(409).json({error:'Esta empresa possui histórico financeiro. Suspenda o acesso em vez de excluir; cancele a renovação no Mercado Pago antes.'});
     await pool.query('DELETE FROM avaliacao_empresas WHERE empresa_id=$1', [id]);
     tenantDbs.delete(id);
 
     res.json({ success: true, empresaId: id });
   });
+
+  registerBillingRoutes(app, pool, requireCompanyOwner, requireSuperAdmin, currentCompanyId, getPlatformPlanPrices);
+  startBillingWorker(pool);
 
   // API Routes FIRST
   app.get('/api/health', (_req, res) => {
@@ -1742,7 +1741,7 @@ if (totalEmpresas === 0) {
       if (!meta) return res.status(404).json({ error: 'Empresa não encontrada.', code: 'COMPANY_NOT_FOUND' });
 
       const block = companyBlock(meta);
-      if (block.blocked) {
+      if (block.blocked && normalizeAccessLevel(user.perfil) !== 'owner') {
         return res.status(block.httpStatus || 403).json({
           error: block.message,
           code: block.code,
@@ -1763,7 +1762,7 @@ if (totalEmpresas === 0) {
         userId: user.id,
         userName: user.nome,
         accessLevel,
-        redirect: `/gerencia?empresa=${encodeURIComponent(companyId)}`,
+        redirect: `${block.blocked ? "/assinatura" : "/gerencia"}?empresa=${encodeURIComponent(companyId)}`,
       });
     } catch (err: any) {
       console.error('[Portal login]', err);
@@ -1794,7 +1793,7 @@ if (totalEmpresas === 0) {
       }
 
       const block = companyBlock(meta);
-      if (block.blocked) {
+      if (block.blocked && req.body?.billingOnly !== true) {
         return res.status(block.httpStatus || 403).json({
           error: block.message,
           code: block.code,
@@ -1815,6 +1814,7 @@ if (totalEmpresas === 0) {
         return res.status(401).json({ error: 'Login ou senha inválidos.' });
       }
       const accessLevel = normalizeAccessLevel(user.perfil);
+      if (req.body?.billingOnly === true && accessLevel !== 'owner') return res.status(403).json({error:'Apenas o proprietário pode gerenciar a assinatura.'});
       clearRateLimit(loginRateKey);
       const token = createAuthSession({ role: 'manager', companyId, userId: user.id, userName: user.nome, accessLevel });
       await pool.query('UPDATE avaliacao_usuarios SET ultimo_acesso_em=NOW(), atualizado_em=NOW() WHERE id=$1', [user.id]);
