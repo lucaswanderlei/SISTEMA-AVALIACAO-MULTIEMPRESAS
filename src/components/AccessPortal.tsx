@@ -181,8 +181,8 @@ export function AccessPortal() {
           </div>}
 
           {mode === 'login' ? <form onSubmit={submit} style={{ background: '#fff', border: '1px solid #ece8eb', borderRadius: 24, padding: 26, boxShadow: '0 22px 55px rgba(42,26,37,.10)' }}>
-            <label style={{ display: 'block', fontSize: 13, fontWeight: 800, marginBottom: 7 }}>{validatorMode ? 'CPF' : 'Login'}</label>
-            <input autoComplete="username" inputMode={validatorMode ? 'numeric' : undefined} value={login} onChange={(e) => setLogin(validatorMode ? e.target.value.replace(/\D/g, '').slice(0, 11) : e.target.value)} placeholder={validatorMode ? 'Digite seu CPF' : 'Seu login'} style={{ width: '100%', boxSizing: 'border-box', height: 50, border: '1px solid #ded9dd', borderRadius: 13, padding: '0 14px', fontSize: 16, outline: 'none', marginBottom: 17 }} />
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 800, marginBottom: 7 }}>{validatorMode ? 'CPF' : 'CPF ou CNPJ'}</label>
+            <input autoComplete="username" inputMode="numeric" value={login} onChange={(e) => setLogin(validatorMode ? e.target.value.replace(/\D/g, '').slice(0, 11) : e.target.value)} placeholder={validatorMode ? 'Digite seu CPF' : 'Digite seu CPF ou CNPJ'} style={{ width: '100%', boxSizing: 'border-box', height: 50, border: '1px solid #ded9dd', borderRadius: 13, padding: '0 14px', fontSize: 16, outline: 'none', marginBottom: 17 }} />
 
             <label style={{ display: 'block', fontSize: 13, fontWeight: 800, marginBottom: 7 }}>Senha</label>
             <div style={{ position: 'relative' }}>
