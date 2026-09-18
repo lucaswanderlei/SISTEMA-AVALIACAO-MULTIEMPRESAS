@@ -1851,11 +1851,13 @@ if (totalEmpresas === 0) {
         return res.json({ success: true, token, role: 'superadmin', redirect: '/super-admin' });
       }
 
+      const requestedCompany = String(req.body?.companyId || '').trim();
       const result = await pool.query(
         `SELECT u.id, u.empresa_id, u.nome, u.login, u.senha_hash, u.perfil, u.ativo
          FROM avaliacao_usuarios u
-         WHERE LOWER(u.login)=LOWER($1) AND u.ativo=TRUE`,
-        [login]
+         WHERE LOWER(u.login)=LOWER($1) AND u.ativo=TRUE
+           AND ($2='' OR u.empresa_id=$2)`,
+        [login, requestedCompany]
       );
 
       const matches = result.rows.filter((user: any) =>
@@ -2679,6 +2681,10 @@ if (totalEmpresas === 0) {
         return res.status(400).json({ error: 'Lista de garçons inválida.' });
       }
       const companyId = currentCompanyId();
+      const waiters = req.body.filter((waiter: any) => waiter && typeof waiter.id === 'string' && String(waiter.name || '').trim());
+      for (const waiter of waiters) {
+        if (!isValidCpf(waiter.cpf)) return res.status(400).json({ error: `Informe um CPF válido para ${String(waiter.name).trim()}.` });
+      }
       const result = await pool.query(
         `UPDATE avaliacao_empresas
          SET dados=jsonb_set(COALESCE(dados,'{}'::jsonb), '{waiters}', $2::jsonb, true),
@@ -2689,21 +2695,21 @@ if (totalEmpresas === 0) {
       );
       if (!result.rows[0]?.dados) return res.status(404).json({ error: 'Empresa não encontrada.' });
       const credentials: Array<{ name: string; login: string; temporaryPassword: string }> = [];
-      const waiters = req.body.filter((waiter: any) => waiter && typeof waiter.id === 'string' && String(waiter.name || '').trim());
       const waiterIds = waiters.map((waiter: any) => `redeemer:${companyId}:${waiter.id}`);
       await pool.query(`UPDATE avaliacao_usuarios SET ativo=FALSE, atualizado_em=NOW()
         WHERE empresa_id=$1 AND perfil='redeemer' AND id <> ALL($2::text[])`, [companyId, waiterIds.length ? waiterIds : ['__none__']]);
       for (const waiter of waiters) {
         const userId = `redeemer:${companyId}:${waiter.id}`;
+        const login = digitsOnly(waiter.cpf);
         const existing = await pool.query('SELECT id, login FROM avaliacao_usuarios WHERE id=$1 AND empresa_id=$2 LIMIT 1', [userId, companyId]);
         if (existing.rows[0]) {
-          await pool.query(`UPDATE avaliacao_usuarios SET nome=$3, perfil='redeemer', ativo=$4, atualizado_em=NOW() WHERE id=$1 AND empresa_id=$2`, [userId, companyId, String(waiter.name).trim(), Boolean(waiter.active)]);
+          const duplicate = await pool.query('SELECT id FROM avaliacao_usuarios WHERE empresa_id=$1 AND LOWER(login)=LOWER($2) AND id<>$3 LIMIT 1', [companyId, login, userId]);
+          if (duplicate.rows[0]) return res.status(409).json({ error: 'Este CPF já possui um acesso nesta empresa.' });
+          await pool.query(`UPDATE avaliacao_usuarios SET nome=$3, login=$4, perfil='redeemer', ativo=$5, atualizado_em=NOW() WHERE id=$1 AND empresa_id=$2`, [userId, companyId, String(waiter.name).trim(), login, Boolean(waiter.active)]);
           continue;
         }
-        const base = `garcom.${String(waiter.name).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.|\.$/g, '').slice(0, 34) || 'atendente'}`;
-        let login = base;
-        let suffix = 2;
-        while ((await pool.query('SELECT id FROM avaliacao_usuarios WHERE empresa_id=$1 AND LOWER(login)=LOWER($2) LIMIT 1', [companyId, login])).rows[0]) login = `${base}.${suffix++}`;
+        const duplicate = await pool.query('SELECT id FROM avaliacao_usuarios WHERE empresa_id=$1 AND LOWER(login)=LOWER($2) LIMIT 1', [companyId, login]);
+        if (duplicate.rows[0]) return res.status(409).json({ error: 'Este CPF já possui um acesso nesta empresa.' });
         const temporaryPassword = `Brinde@${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
         await pool.query(`INSERT INTO avaliacao_usuarios (id, empresa_id, nome, login, senha_hash, perfil, ativo)
           VALUES ($1,$2,$3,$4,$5,'redeemer',$6)`, [userId, companyId, String(waiter.name).trim(), login, hashPassword(temporaryPassword), Boolean(waiter.active)]);
