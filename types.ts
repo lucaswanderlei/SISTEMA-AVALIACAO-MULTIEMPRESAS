@@ -1,3 +1,5 @@
+export interface ConsumptionItem { id: string; name: string; }
+
 export interface RatingCriteria {
   service: number;     // Atendimento (1 to 5)
   ambiance: number;    // Ambiente (1 to 5)
@@ -10,13 +12,33 @@ export interface Waiter {
   name: string;
   nickname?: string;
   badgeNumber?: string;
+  cpf?: string;
   role: 'Garçom' | 'Garçonete' | 'Atendente' | 'Cumim';
   photoUrl?: string;
   active: boolean;
   createdAt: string;
 }
 
+export interface PublicReviewInput {
+  consumedItemIds?: string[];
+  requestToken: string;
+  customerName?: string;
+  customerPhone: string;
+  tableNumber?: number;
+  ratings: RatingCriteria;
+  quickTags: string[];
+  criticism?: string;
+  suggestion?: string;
+  waiterId?: string;
+  waiterRating?: number;
+  waiterCompliments?: string[];
+  privacyAcknowledged: boolean;
+  marketingConsent: boolean;
+}
+
 export interface Review {
+  consumedItems?: ConsumptionItem[];
+  rewardId?: string;
   id: string;
   tableNumber?: number;
   customerName?: string;
@@ -35,6 +57,8 @@ export interface Review {
   rewardClaimed: boolean;
   claimedAt?: string;
   claimedTable?: number;  // Mesa onde o voucher foi validado/resgatado
+  claimedByUserId?: string;
+  claimedByName?: string;
   availableFrom?: string; // Data a partir da qual o brinde pode ser resgatado (24h após sorteio)
   expiresAt?: string;     // Data limite para usar o brinde (até 15 dias)
   notified5DaysAt?: string; // Data/hora em que o lembrete de 5 dias foi enviado
@@ -42,6 +66,12 @@ export interface Review {
   whatsappStatus?: 'sent_silently' | 'delivered' | 'failed' | 'pending'; // Status do envio sem abrir app
   whatsappSentAt?: string;
   rewardSentViaWhatsapp?: boolean; // True quando o brinde foi efetivamente enviado apos cliente responder SIM
+  privacyAcceptedAt?: string; // Registro de ciência do Aviso de Privacidade
+  privacyNoticeVersion?: string; // Versão do aviso exibido ao cliente
+  marketingConsent?: boolean; // Consentimento opcional para novidades/ofertas
+  marketingConsentAt?: string;
+  marketingConsentRevokedAt?: string;
+  privacyAnonymizedAt?: string;
   createdAt: string;
 }
 
@@ -55,17 +85,23 @@ export interface RewardOption {
   probabilityWeight?: number;
 }
 
-export type RatingIconType = 'star' | 'coxinha' | 'brigadeiro' | 'cake' | 'pizza';
+export type RatingIconType = 'star' | 'coxinha' | 'brigadeiro' | 'cake' | 'pizza' | 'icecream' | 'coffee' | 'hamburger' | 'fries' | 'donut' | 'chicken' | 'beef' | 'sandwich' | 'hotdog' | 'croissant' | 'cupcake' | 'cookie' | 'shrimp' | 'fish' | 'pasta' | 'drink' | 'beer' | 'meal' | 'salad' | 'taco' | 'skewer';
 
 export interface RestaurantSettings {
+  consumptionItems?: ConsumptionItem[];
   name: string;
   tagline: string;
   primaryColor: string;
   secondaryColor?: string;
   logoUrl?: string;
-  ratingIcon?: RatingIconType;
+  ratingIcon?: RatingIconType; // Compatibilidade com configurações antigas
+  serviceRatingIcon?: RatingIconType;
+  ambianceRatingIcon?: RatingIconType;
+  productsRatingIcon?: RatingIconType;
+  waitTimeRatingIcon?: RatingIconType;
   evaluationTitle?: string;
   evaluationDescription?: string;
+  quickTagsOptions?: string[]; // Destaques rápidos personalizáveis por empresa
   totalTables: number;
   activeRewardMode: 'wheel' | 'fixed'; // Gira roleta ou ganha brinde fixo
   fixedRewardId: string;
@@ -77,8 +113,14 @@ export interface RestaurantSettings {
   whatsappApiUrl?: string;     // URL do Gateway (Z-API, Evolution, Meta Cloud API)
   whatsappApiToken?: string;   // Token ou Chave da API do Gateway
   whatsappCustomMessage?: string; // Mensagem personalizada do voucher para WhatsApp (sem teste ou desconsiderar)
+  voucherMessageTemplate?: string; // Modelo editável da mensagem oficial do voucher por empresa
   whatsappTemplateName?: string; // Nome do template pré-aprovado pela Meta (avaliacao_brinde)
   whatsappTemplateLanguage?: string; // Idioma do template (ex: pt_BR, en_US)
   whatsappWebhookVerifyToken?: string; // Token de verificação do webhook da Meta
+  legalName?: string; // Razão social/nome do responsável pelo tratamento
+  privacyContactEmail?: string; // Contato para solicitações de privacidade
+  privacyContactPhone?: string;
+  privacyNoticeRequired?: boolean; // Exigir ciência do aviso antes de avaliar
+  marketingOptInEnabled?: boolean; // Mostrar consentimento opcional de ofertas
   managerPin?: string;         // Senha/PIN de 4 dígitos para proteger o Painel do Restaurante (padrão: 1234)
 }
