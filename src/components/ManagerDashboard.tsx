@@ -52,6 +52,7 @@ import { RestaurantSettings, RewardOption, Review, Waiter } from '../types';
 import { CustomerDatabaseView } from './CustomerDatabaseView';
 import { UserAccessManager } from './UserAccessManager';
 import { apiUpdateAccessCredentials, tenantFetch } from '../lib/api';
+import type { WaiterCredential } from '../lib/api';
 import { tenantKey, withCompanyParam } from '../lib/tenant';
 import { RatingChoiceIcon } from './RatingChoiceIcon';
 import { QUICK_TAGS_OPTIONS } from '../data/mockData';
@@ -67,12 +68,12 @@ interface ManagerDashboardProps {
   onValidateReward: (code: string) => Promise<boolean>;
   onUpdateRewards: (rewards: RewardOption[]) => void;
   onUpdateSettings: (settings: RestaurantSettings) => void;
-  onUpdateWaiters: (waiters: Waiter[]) => void;
+  onUpdateWaiters: (waiters: Waiter[]) => Promise<{ success: boolean; credentials: WaiterCredential[] }>;
   onDeleteReview?: (id: string | string[]) => void;
   onClearAllReviews?: () => void;
   onUpdateReviewsList?: (reviews: Review[]) => void;
   onSaveDatabase?: () => Promise<boolean>;
-  accessLevel?: 'owner' | 'manager' | 'viewer' | 'superadmin';
+  accessLevel?: 'owner' | 'manager' | 'viewer' | 'redeemer' | 'superadmin';
 }
 
 const DEFAULT_VOUCHER_TEMPLATE = `*VOUCHER DE CORTESIA - {{empresa}}* 🥟✨
@@ -1169,7 +1170,7 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
     setIsWaiterModalOpen(true);
   };
 
-  const handleSaveWaiter = (e: React.FormEvent) => {
+  const handleSaveWaiter = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!waiterName.trim()) return;
 
@@ -1186,7 +1187,7 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
             }
           : w
       );
-      onUpdateWaiters(updated);
+      await onUpdateWaiters(updated);
     } else {
       const newW: Waiter = {
         id: `w-${Date.now()}`,
@@ -1198,14 +1199,18 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
         createdAt: new Date().toISOString(),
       };
       const updated = [...waiters, newW];
-      onUpdateWaiters(updated);
+      const saved = await onUpdateWaiters(updated);
+      if (saved.success && saved.credentials.length) {
+        const access = saved.credentials.map(item => `${item.name}\nLogin: ${item.login}\nSenha temporária: ${item.temporaryPassword}`).join('\n\n');
+        window.alert(`Acesso de validação criado. Anote e entregue estas credenciais ao funcionário:\n\n${access}`);
+      }
     }
     setIsWaiterModalOpen(false);
   };
 
   const handleToggleWaiterActive = (id: string) => {
     const updated = waiters.map((w) => (w.id === id ? { ...w, active: !w.active } : w));
-    onUpdateWaiters(updated);
+    void onUpdateWaiters(updated);
   };
 
   const handleDeleteWaiter = (waiter: Waiter) => {
@@ -1215,7 +1220,7 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
   const confirmDeleteWaiter = () => {
     if (!waiterToDelete) return;
     const updated = waiters.filter((w) => w.id !== waiterToDelete.id);
-    onUpdateWaiters(updated);
+    void onUpdateWaiters(updated);
     setWaiterToDelete(null);
   };
 

@@ -7,7 +7,7 @@ type PortalResponse = {
   role?: 'manager' | 'superadmin';
   companyId?: string;
   userName?: string;
-  accessLevel?: 'owner' | 'manager' | 'viewer';
+  accessLevel?: 'owner' | 'manager' | 'viewer' | 'redeemer';
   redirect?: string;
   error?: string;
 };

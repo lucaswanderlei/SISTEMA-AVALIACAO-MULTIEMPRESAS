@@ -13,6 +13,7 @@ import { tenantKey } from '../lib/tenant';
 const levelLabel = (level: CompanyUserAccessLevel) => {
   if (level === 'owner') return 'Proprietário';
   if (level === 'viewer') return 'Somente leitura';
+  if (level === 'redeemer') return 'Validador de brindes';
   return 'Gerente';
 };
 
@@ -34,7 +35,7 @@ export function UserAccessManager() {
   const [login, setLogin] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [accessLevel, setAccessLevel] = useState<'manager' | 'viewer'>('manager');
+  const [accessLevel, setAccessLevel] = useState<'manager' | 'viewer' | 'redeemer'>('manager');
 
   const [editing, setEditing] = useState<CompanyUser | null>(null);
   const [editName, setEditName] = useState('');
@@ -134,7 +135,7 @@ export function UserAccessManager() {
           <span className="p-2.5 bg-sky-100 text-sky-700 rounded-2xl"><Users className="w-5 h-5" /></span>
           <div>
             <h3 className="font-extrabold text-stone-900 text-base">Usuários e Permissões</h3>
-            <p className="text-xs text-stone-500 mt-0.5">Crie acessos individuais. Gerentes podem operar o painel; usuários de leitura apenas consultam métricas, avaliações, CRM e relatórios.</p>
+            <p className="text-xs text-stone-500 mt-0.5">Crie acessos individuais. O validador de brindes vê apenas a tela de leitura e resgate por QR Code.</p>
           </div>
         </div>
         <div className="flex gap-2">
@@ -155,9 +156,10 @@ export function UserAccessManager() {
             <input required minLength={6} type={showPassword ? 'text' : 'password'} value={password} onChange={e=>setPassword(e.target.value)} placeholder="Senha inicial (mín. 6)" className="w-full p-3 pr-10 rounded-xl border border-stone-300 bg-white text-sm" />
             <button type="button" onClick={()=>setShowPassword(v=>!v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400">{showPassword ? <EyeOff className="w-4 h-4"/> : <Eye className="w-4 h-4"/>}</button>
           </div>
-          <select value={accessLevel} onChange={e=>setAccessLevel(e.target.value as 'manager'|'viewer')} className="p-3 rounded-xl border border-stone-300 bg-white text-sm font-bold">
+          <select value={accessLevel} onChange={e=>setAccessLevel(e.target.value as 'manager'|'viewer'|'redeemer')} className="p-3 rounded-xl border border-stone-300 bg-white text-sm font-bold">
             <option value="manager">Gerente — pode editar e operar</option>
             <option value="viewer">Somente leitura — não pode alterar dados</option>
+            <option value="redeemer">Validador de brindes — somente resgate</option>
           </select>
           <div className="flex gap-2 md:justify-end">
             <button type="button" onClick={()=>setShowCreate(false)} className="px-4 py-2.5 rounded-xl bg-white border border-stone-300 text-xs font-bold flex items-center gap-1"><X className="w-4 h-4"/>Cancelar</button>
@@ -181,6 +183,7 @@ export function UserAccessManager() {
                   <select value={editLevel} onChange={e=>setEditLevel(e.target.value as CompanyUserAccessLevel)} className="p-2.5 rounded-xl border border-stone-300 bg-white text-sm font-bold">
                     <option value="manager">Gerente</option>
                     <option value="viewer">Somente leitura</option>
+                    <option value="redeemer">Validador de brindes</option>
                   </select>
                 )}
                 {user.perfil !== 'owner' && <label className="p-2.5 rounded-xl border border-stone-300 bg-white text-xs font-bold flex items-center gap-2"><input type="checkbox" checked={editActive} onChange={e=>setEditActive(e.target.checked)} />Usuário ativo</label>}
