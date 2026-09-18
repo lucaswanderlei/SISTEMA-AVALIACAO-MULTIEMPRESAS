@@ -67,6 +67,7 @@ import { SuperAdmin } from './components/SuperAdmin';
 import { LegalPage } from './components/LegalPage';
 import { AccessPortal } from './components/AccessPortal';
 import { HelpCenter } from './components/HelpCenter';
+import { VoucherValidationPortal } from './components/VoucherValidationPortal';
 
 function playChimeSound() {
   try {
@@ -96,6 +97,7 @@ export default function App() {
     if (cleanPath === '/termos') return <LegalPage kind="terms" />;
     if (cleanPath === '/assinatura') return <BillingPage />;
     if (cleanPath === '/acesso') return <AccessPortal />;
+    if (cleanPath === '/validar-brinde') return <VoucherValidationPortal />;
 
     // app.avaliaeganha.com.br sem empresa/QR é o portal geral de acesso.
     // Avaliações continuam abrindo normalmente quando a URL contém empresa,
@@ -165,10 +167,10 @@ export default function App() {
       return 'manager';
     }
   });
-  const [managerAccessLevel, setManagerAccessLevel] = useState<'owner' | 'manager' | 'viewer' | 'superadmin'>(() => {
+  const [managerAccessLevel, setManagerAccessLevel] = useState<'owner' | 'manager' | 'viewer' | 'redeemer' | 'superadmin'>(() => {
     if (typeof window === 'undefined') return 'owner';
     try {
-      return (sessionStorage.getItem(tenantKey('restaurant_manager_access')) as 'owner' | 'manager' | 'viewer' | 'superadmin') || 'owner';
+      return (sessionStorage.getItem(tenantKey('restaurant_manager_access')) as 'owner' | 'manager' | 'viewer' | 'redeemer' | 'superadmin') || 'owner';
     } catch {
       return 'owner';
     }
@@ -475,6 +477,10 @@ export default function App() {
         setPinError(result.error || 'Login ou senha inválidos.');
         return;
       }
+      if (result.accessLevel === 'redeemer') {
+        window.location.assign(`/validar-brinde?empresa=${encodeURIComponent(getCompanyId())}`);
+        return;
+      }
       try {
         sessionStorage.setItem(tenantKey('restaurant_manager_auth'), 'true');
         sessionStorage.setItem(tenantKey('restaurant_manager_role'), result.role || 'manager');
@@ -552,10 +558,12 @@ export default function App() {
       whatsappCustomMessage: newSettings.whatsappCustomMessage });
     return persistConfig(() => apiSaveSettings(newSettings));
   };
-  const handleWaitersChange = (newWaiters: Waiter[]) => {
+  const handleWaitersChange = async (newWaiters: Waiter[]) => {
     setWaiters(newWaiters);
     saveWaiters(newWaiters);
-    return persistConfig(() => apiSaveWaiters(newWaiters));
+    const response = await apiSaveWaiters(newWaiters);
+    if (!response.success) showToast('⚠️ O servidor não confirmou o cadastro do funcionário. Tente novamente.');
+    return response;
   };
   const handleForceSaveDatabase = async (explicitSettings?: RestaurantSettings): Promise<boolean> => {
     const confirmed = await persistConfig(async () => {

@@ -56,6 +56,8 @@ export interface Review {
   rewardClaimed: boolean;
   claimedAt?: string;
   claimedTable?: number;  // Mesa onde o voucher foi validado/resgatado
+  claimedByUserId?: string;
+  claimedByName?: string;
   availableFrom?: string; // Data a partir da qual o brinde pode ser resgatado (24h após sorteio)
   expiresAt?: string;     // Data limite para usar o brinde (até 15 dias)
   notified5DaysAt?: string; // Data/hora em que o lembrete de 5 dias foi enviado
