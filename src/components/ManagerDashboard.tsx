@@ -1233,7 +1233,7 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
   };
 
   const copyValidatorLink = async () => {
-    const link = `${window.location.origin}/acesso?empresa=${encodeURIComponent(getCompanyId())}&modo=validador`;
+    const link = `${window.location.origin}/validar-brinde?empresa=${encodeURIComponent(getCompanyId())}`;
     try {
       await navigator.clipboard.writeText(link);
       window.alert('Link dos validadores copiado. Envie-o apenas à equipe desta empresa.');
