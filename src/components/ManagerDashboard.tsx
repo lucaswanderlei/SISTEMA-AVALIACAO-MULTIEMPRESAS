@@ -53,7 +53,7 @@ import { CustomerDatabaseView } from './CustomerDatabaseView';
 import { UserAccessManager } from './UserAccessManager';
 import { apiUpdateAccessCredentials, tenantFetch } from '../lib/api';
 import type { WaiterCredential } from '../lib/api';
-import { tenantKey, withCompanyParam } from '../lib/tenant';
+import { getCompanyId, tenantKey, withCompanyParam } from '../lib/tenant';
 import { RatingChoiceIcon } from './RatingChoiceIcon';
 import { QUICK_TAGS_OPTIONS } from '../data/mockData';
 import type { RatingIconType } from '../types';
@@ -696,6 +696,7 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
   const [waiterName, setWaiterName] = useState('');
   const [waiterNickname, setWaiterNickname] = useState('');
   const [waiterBadgeNumber, setWaiterBadgeNumber] = useState('');
+  const [waiterCpf, setWaiterCpf] = useState('');
   const [waiterRole, setWaiterRole] = useState<'Garçom' | 'Garçonete' | 'Atendente' | 'Cumim'>('Garçom');
   const [waiterActive, setWaiterActive] = useState(true);
 
@@ -1155,6 +1156,7 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
     setWaiterName('');
     setWaiterNickname('');
     setWaiterBadgeNumber('');
+    setWaiterCpf('');
     setWaiterRole('Garçom');
     setWaiterActive(true);
     setIsWaiterModalOpen(true);
@@ -1165,6 +1167,7 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
     setWaiterName(waiter.name);
     setWaiterNickname(waiter.nickname || '');
     setWaiterBadgeNumber(waiter.badgeNumber || '');
+    setWaiterCpf(waiter.cpf || '');
     setWaiterRole(waiter.role);
     setWaiterActive(waiter.active);
     setIsWaiterModalOpen(true);
@@ -1172,7 +1175,10 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
 
   const handleSaveWaiter = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!waiterName.trim()) return;
+    if (!waiterName.trim() || waiterCpf.replace(/\D/g, '').length !== 11) {
+      window.alert('Informe o CPF do funcionário com 11 números. Ele será usado como login.');
+      return;
+    }
 
     if (editingWaiterId) {
       const updated = waiters.map((w) =>
@@ -1182,6 +1188,7 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
               name: waiterName.trim(),
               nickname: waiterNickname.trim() || undefined,
               badgeNumber: waiterBadgeNumber.trim() || undefined,
+              cpf: waiterCpf.replace(/\D/g, ''),
               role: waiterRole,
               active: waiterActive,
             }
@@ -1194,6 +1201,7 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
         name: waiterName.trim(),
         nickname: waiterNickname.trim() || undefined,
         badgeNumber: waiterBadgeNumber.trim() || undefined,
+        cpf: waiterCpf.replace(/\D/g, ''),
         role: waiterRole,
         active: waiterActive,
         createdAt: new Date().toISOString(),
@@ -1201,7 +1209,7 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
       const updated = [...waiters, newW];
       const saved = await onUpdateWaiters(updated);
       if (saved.success && saved.credentials.length) {
-        const access = saved.credentials.map(item => `${item.name}\nLogin: ${item.login}\nSenha temporária: ${item.temporaryPassword}`).join('\n\n');
+        const access = saved.credentials.map(item => `${item.name}\nCPF (login): ${item.login}\nSenha temporária: ${item.temporaryPassword}`).join('\n\n');
         window.alert(`Acesso de validação criado. Anote e entregue estas credenciais ao funcionário:\n\n${access}`);
       }
     }
@@ -1222,6 +1230,16 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
     const updated = waiters.filter((w) => w.id !== waiterToDelete.id);
     void onUpdateWaiters(updated);
     setWaiterToDelete(null);
+  };
+
+  const copyValidatorLink = async () => {
+    const link = `${window.location.origin}/acesso?empresa=${encodeURIComponent(getCompanyId())}&modo=validador`;
+    try {
+      await navigator.clipboard.writeText(link);
+      window.alert('Link dos validadores copiado. Envie-o apenas à equipe desta empresa.');
+    } catch {
+      window.prompt('Copie o link dos validadores:', link);
+    }
   };
 
   
@@ -2093,6 +2111,10 @@ return (
             </div>
 
             <div className="flex items-center gap-2 shrink-0 flex-wrap">
+              <button type="button" onClick={() => void copyValidatorLink()} className="px-3.5 py-2.5 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-bold transition shadow-md shadow-sky-200 flex items-center justify-center gap-1.5">
+                <KeyRound className="w-4 h-4" />
+                <span>Copiar link dos validadores</span>
+              </button>
               {onSaveDatabase && (
                 <button
                   type="button"
@@ -2400,6 +2422,11 @@ return (
                       required
                       autoFocus
                     />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-stone-700 mb-1">CPF do funcionário *</label>
+                    <input type="text" inputMode="numeric" value={waiterCpf} onChange={(e) => setWaiterCpf(e.target.value.replace(/\D/g, '').slice(0, 11))} placeholder="Somente números" className="w-full text-xs p-3 rounded-xl border border-stone-200 focus:border-rose-500 outline-none" required />
+                    <p className="mt-1 text-[11px] text-stone-400">Será o login dele no link de validação desta empresa.</p>
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">

@@ -37,6 +37,8 @@ export function AccessPortal() {
   const [resetPasswordConfirm, setResetPasswordConfirm] = useState('');
   const [message, setMessage] = useState('');
   const resetToken = (() => { try { return new URLSearchParams(window.location.search).get('reset_token') || ''; } catch { return ''; } })();
+  const accessCompanyId = (() => { try { return new URLSearchParams(window.location.search).get('empresa') || ''; } catch { return ''; } })();
+  const validatorMode = (() => { try { return new URLSearchParams(window.location.search).get('modo') === 'validador'; } catch { return false; } })();
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -51,7 +53,7 @@ export function AccessPortal() {
       const response = await fetch('/api/auth/portal-login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ login: login.trim(), password }),
+        body: JSON.stringify({ login: login.trim(), password, companyId: accessCompanyId || undefined }),
       });
       const data = (await response.json().catch(() => ({}))) as PortalResponse;
       if (!response.ok || !data.success || !data.token) {
@@ -169,7 +171,7 @@ export function AccessPortal() {
         <div style={{ width: '100%', maxWidth: 440 }}>
           <div style={{ textAlign: 'center', marginBottom: 24 }}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '7px 11px', background: '#f5e9ef', color: '#7a234f', borderRadius: 999, fontWeight: 800, fontSize: 12 }}><ShieldCheck size={15}/> Área segura</span>
-            <h1 style={{ fontSize: 'clamp(30px,5vw,42px)', letterSpacing: '-.045em', lineHeight: 1.02, margin: '14px 0 10px' }}>{mode === 'login' ? 'Entre no seu painel' : mode === 'register' ? 'Crie sua conta grátis' : mode === 'forgot' ? 'Recupere sua senha' : 'Defina uma nova senha'}</h1>
+            <h1 style={{ fontSize: 'clamp(30px,5vw,42px)', letterSpacing: '-.045em', lineHeight: 1.02, margin: '14px 0 10px' }}>{mode === 'login' ? (validatorMode ? 'Validar brindes' : 'Entre no seu painel') : mode === 'register' ? 'Crie sua conta grátis' : mode === 'forgot' ? 'Recupere sua senha' : 'Defina uma nova senha'}</h1>
             <p style={{ margin: 0, color: '#6f6870', lineHeight: 1.55 }}>{mode === 'login' ? 'Use seu e-mail e senha. O sistema identifica automaticamente o seu estabelecimento.' : mode === 'register' ? 'Teste o Avalia e Ganha por 7 dias. Sem cobrança agora.' : mode === 'forgot' ? 'Informe o e-mail ou login cadastrado para receber o link de redefinição.' : 'Crie uma senha segura para voltar a acessar sua conta.'}</p>
           </div>
 
@@ -179,8 +181,8 @@ export function AccessPortal() {
           </div>}
 
           {mode === 'login' ? <form onSubmit={submit} style={{ background: '#fff', border: '1px solid #ece8eb', borderRadius: 24, padding: 26, boxShadow: '0 22px 55px rgba(42,26,37,.10)' }}>
-            <label style={{ display: 'block', fontSize: 13, fontWeight: 800, marginBottom: 7 }}>Login</label>
-            <input autoComplete="username" value={login} onChange={(e) => setLogin(e.target.value)} placeholder="Seu login" style={{ width: '100%', boxSizing: 'border-box', height: 50, border: '1px solid #ded9dd', borderRadius: 13, padding: '0 14px', fontSize: 16, outline: 'none', marginBottom: 17 }} />
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 800, marginBottom: 7 }}>{validatorMode ? 'CPF' : 'Login'}</label>
+            <input autoComplete="username" inputMode={validatorMode ? 'numeric' : undefined} value={login} onChange={(e) => setLogin(validatorMode ? e.target.value.replace(/\D/g, '').slice(0, 11) : e.target.value)} placeholder={validatorMode ? 'Digite seu CPF' : 'Seu login'} style={{ width: '100%', boxSizing: 'border-box', height: 50, border: '1px solid #ded9dd', borderRadius: 13, padding: '0 14px', fontSize: 16, outline: 'none', marginBottom: 17 }} />
 
             <label style={{ display: 'block', fontSize: 13, fontWeight: 800, marginBottom: 7 }}>Senha</label>
             <div style={{ position: 'relative' }}>
