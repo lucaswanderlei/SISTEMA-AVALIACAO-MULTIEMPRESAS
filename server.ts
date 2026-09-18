@@ -304,10 +304,13 @@ async function initPostgres() {
 
     // Migração automática: empresas antigas passam a ter login = slug/ID e
     // senha = antigo managerPin (ou 1234 quando nunca foi personalizado).
-    const legacyCompanies = await pool.query('SELECT empresa_id, dados, login, senha_hash FROM avaliacao_empresas');
+    const legacyCompanies = await pool.query('SELECT empresa_id, dados, login, senha_hash, documento_cobranca FROM avaliacao_empresas');
     for (const row of legacyCompanies.rows) {
       const legacyPin = String(row.dados?.settings?.managerPin || '1234');
-      const nextLogin = String(row.login || row.empresa_id).trim().toLowerCase();
+      const documentLogin = digitsOnly(row.documento_cobranca);
+      const nextLogin = (isValidCpf(documentLogin) || isValidCnpj(documentLogin))
+        ? documentLogin
+        : String(row.login || row.empresa_id).trim().toLowerCase();
       const nextHash = row.senha_hash || hashPassword(legacyPin);
       const nextData = row.dados || {};
       nextData.settings = { ...(nextData.settings || {}), managerLogin: nextLogin };
@@ -1789,7 +1792,7 @@ if (totalEmpresas === 0) {
       const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
       const db = freshDb();
       db.settings.name = companyName;
-      (db.settings as any).managerLogin = email;
+      (db.settings as any).managerLogin = billingDocument.value;
 
       const client = await pool.connect();
       try {
@@ -1798,12 +1801,12 @@ if (totalEmpresas === 0) {
           `INSERT INTO avaliacao_empresas
             (empresa_id,nome,slug,ativo,dados,login,senha_hash,plano,status_assinatura,vencimento_em,titular_nome,email_cobranca,telefone_cobranca,documento_cobranca,tipo_documento_cobranca)
            VALUES ($1,$2,$1,TRUE,$3::jsonb,$4,$5,'pro','trial',$6,$7,$8,$9,$10,$11)`,
-          [empresaId, companyName, JSON.stringify(db), email, hashPassword(password), expiresAt, fullName, email, phone, billingDocument.value, billingDocument.type]
+          [empresaId, companyName, JSON.stringify(db), billingDocument.value, hashPassword(password), expiresAt, fullName, email, phone, billingDocument.value, billingDocument.type]
         );
         await client.query(
           `INSERT INTO avaliacao_usuarios (id,empresa_id,nome,login,email,senha_hash,perfil,ativo)
            VALUES ($1,$2,$3,$4,$5,$6,'owner',TRUE)`,
-          [`owner:${empresaId}`, empresaId, fullName, email, email, hashPassword(password)]
+          [`owner:${empresaId}`, empresaId, fullName, billingDocument.value, email, hashPassword(password)]
         );
         await client.query('COMMIT');
       } catch (error) {
