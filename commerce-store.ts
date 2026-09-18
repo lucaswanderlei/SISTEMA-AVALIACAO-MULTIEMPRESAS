@@ -80,6 +80,6 @@ export async function createPublicReview(pool: any, companyId: string, body: any
     return { ...issued, replay: false };
   });
 }
-export async function redeemVoucher(pool: any, companyId: string, code: unknown, table: unknown) {
-  return withCompanyTransaction(pool, companyId, db => claimReview(db, code, table));
+export async function redeemVoucher(pool: any, companyId: string, code: unknown, table: unknown, validator?: { id: string; name: string }) {
+  return withCompanyTransaction(pool, companyId, db => claimReview(db, code, table, new Date(), validator));
 }

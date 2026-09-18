@@ -49,7 +49,7 @@ function superAdminCredentialsMatch(login: unknown, password: unknown): boolean 
   return safeEqualText(String(login || '').trim(), configuredLogin) && safeEqualText(String(password || ''), configuredPassword);
 }
 
-type CompanyAccessLevel = 'owner' | 'manager' | 'viewer';
+type CompanyAccessLevel = 'owner' | 'manager' | 'viewer' | 'redeemer';
 type AuthSession = { role: 'superadmin' | 'manager'; companyId?: string; userId?: string; userName?: string; accessLevel?: CompanyAccessLevel; expiresAt: number };
 const authSessions = new Map<string, AuthSession>();
 const AUTH_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
@@ -113,6 +113,7 @@ function invalidateCompanySessions(companyId: string) {
 
 function normalizeAccessLevel(value: unknown): CompanyAccessLevel {
   const level = String(value || '').trim().toLowerCase();
+  if (level === 'redeemer') return 'redeemer';
   if (level === 'viewer') return 'viewer';
   if (level === 'manager') return 'manager';
   return 'owner';
@@ -1171,9 +1172,14 @@ if (totalEmpresas === 0) {
     return Boolean(session && (session.role === 'superadmin' || (session.role === 'manager' && session.companyId === companyId)));
   }
 
+  function sessionCanAccessDashboard(req: express.Request, companyId = currentCompanyId()): boolean {
+    const session = getAuthSession(req);
+    return Boolean(session && (session.role === 'superadmin' || (session.role === 'manager' && session.companyId === companyId && normalizeAccessLevel(session.accessLevel) !== 'redeemer')));
+  }
+
   function requireCompanyManager(req: express.Request, res: express.Response, next: express.NextFunction) {
     if (!getAuthSession(req)) return res.status(401).json({ error: 'Faça login novamente.' });
-    if (sessionCanManageCompany(req)) return next();
+    if (sessionCanAccessDashboard(req)) return next();
     return res.status(403).json({ error: 'Sessão sem permissão para esta empresa.' });
   }
 
@@ -1181,8 +1187,17 @@ if (totalEmpresas === 0) {
     const session = getAuthSession(req);
     if (!session) return res.status(401).json({ error: 'Faça login novamente.' });
     if (!sessionCanManageCompany(req)) return res.status(403).json({ error: 'Sessão sem permissão para esta empresa.' });
-    if (session.role === 'superadmin' || normalizeAccessLevel(session.accessLevel) !== 'viewer') return next();
+    if (session.role === 'superadmin' || ['owner', 'manager'].includes(normalizeAccessLevel(session.accessLevel))) return next();
     return res.status(403).json({ error: 'Este usuário possui acesso somente para consulta.' });
+  }
+
+  function requireVoucherValidator(req: express.Request, res: express.Response, next: express.NextFunction) {
+    const session = getAuthSession(req);
+    if (!session) return res.status(401).json({ error: 'Faça login novamente.' });
+    if (!sessionCanManageCompany(req)) return res.status(403).json({ error: 'Sessão sem permissão para esta empresa.' });
+    const level = normalizeAccessLevel(session.accessLevel);
+    if (session.role === 'superadmin' || level === 'owner' || level === 'manager' || level === 'redeemer') return next();
+    return res.status(403).json({ error: 'Este acesso não pode validar brindes.' });
   }
 
   function requireCompanyOwner(req: express.Request, res: express.Response, next: express.NextFunction) {
@@ -1885,7 +1900,7 @@ if (totalEmpresas === 0) {
         userId: user.id,
         userName: user.nome,
         accessLevel,
-        redirect: `${block.blocked ? "/assinatura" : "/gerencia"}?empresa=${encodeURIComponent(companyId)}`,
+        redirect: `${block.blocked ? "/assinatura" : accessLevel === 'redeemer' ? '/validar-brinde' : '/gerencia'}?empresa=${encodeURIComponent(companyId)}`,
       });
     } catch (err: any) {
       console.error('[Portal login]', err);
@@ -2238,7 +2253,7 @@ if (totalEmpresas === 0) {
       adoptCommittedDb(db);
 
       const session = getAuthSession(_req);
-      const canManage = sessionCanManageCompany(_req, companyId);
+      const canManage = sessionCanAccessDashboard(_req, companyId);
       const canViewPrivateSettings = Boolean(canManage && (session?.role === 'superadmin' || normalizeAccessLevel(session?.accessLevel) !== 'viewer'));
       const responseSettings: any = canViewPrivateSettings ? { ...db.settings } : publicSettingsOnly(db.settings as any);
       return res.json({
@@ -2457,8 +2472,11 @@ if (totalEmpresas === 0) {
   });
 
   // Validate / Claim Reward Voucher
-  app.post('/api/reviews/validate', requireCompanyEditor, async (req, res) => {
-    const result = await redeemVoucher(pool, currentCompanyId(), req.body?.code, req.body?.tableNumber);
+  app.post('/api/reviews/validate', requireVoucherValidator, async (req, res) => {
+    const session = getAuthSession(req)!;
+    const result = await redeemVoucher(pool, currentCompanyId(), req.body?.code, req.body?.tableNumber, {
+      id: session.userId || 'superadmin', name: session.userName || 'Administrador',
+    });
     adoptCommittedDb(result.db);
     return res.json({ success: true, review: result.value, reviews: result.db.reviews });
   });
@@ -2670,9 +2688,30 @@ if (totalEmpresas === 0) {
         [companyId, JSON.stringify(req.body)]
       );
       if (!result.rows[0]?.dados) return res.status(404).json({ error: 'Empresa não encontrada.' });
+      const credentials: Array<{ name: string; login: string; temporaryPassword: string }> = [];
+      const waiters = req.body.filter((waiter: any) => waiter && typeof waiter.id === 'string' && String(waiter.name || '').trim());
+      const waiterIds = waiters.map((waiter: any) => `redeemer:${companyId}:${waiter.id}`);
+      await pool.query(`UPDATE avaliacao_usuarios SET ativo=FALSE, atualizado_em=NOW()
+        WHERE empresa_id=$1 AND perfil='redeemer' AND id <> ALL($2::text[])`, [companyId, waiterIds.length ? waiterIds : ['__none__']]);
+      for (const waiter of waiters) {
+        const userId = `redeemer:${companyId}:${waiter.id}`;
+        const existing = await pool.query('SELECT id, login FROM avaliacao_usuarios WHERE id=$1 AND empresa_id=$2 LIMIT 1', [userId, companyId]);
+        if (existing.rows[0]) {
+          await pool.query(`UPDATE avaliacao_usuarios SET nome=$3, perfil='redeemer', ativo=$4, atualizado_em=NOW() WHERE id=$1 AND empresa_id=$2`, [userId, companyId, String(waiter.name).trim(), Boolean(waiter.active)]);
+          continue;
+        }
+        const base = `garcom.${String(waiter.name).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.|\.$/g, '').slice(0, 34) || 'atendente'}`;
+        let login = base;
+        let suffix = 2;
+        while ((await pool.query('SELECT id FROM avaliacao_usuarios WHERE empresa_id=$1 AND LOWER(login)=LOWER($2) LIMIT 1', [companyId, login])).rows[0]) login = `${base}.${suffix++}`;
+        const temporaryPassword = `Brinde@${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+        await pool.query(`INSERT INTO avaliacao_usuarios (id, empresa_id, nome, login, senha_hash, perfil, ativo)
+          VALUES ($1,$2,$3,$4,$5,'redeemer',$6)`, [userId, companyId, String(waiter.name).trim(), login, hashPassword(temporaryPassword), Boolean(waiter.active)]);
+        credentials.push({ name: String(waiter.name).trim(), login, temporaryPassword });
+      }
       const current = tenantDbs.get(companyId)!;
       current.waiters = req.body;
-      return res.json({ success: true, waiters: current.waiters });
+      return res.json({ success: true, waiters: current.waiters, credentials });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Erro ao salvar garçons.' });
     }

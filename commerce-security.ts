@@ -102,7 +102,7 @@ export function issueReview(db: any, input: ReturnType<typeof parseReviewInput>[
   };
   return { review, reward: clone(reward) };
 }
-export function claimReview(db: any, code: unknown, table: unknown, now = new Date()) {
+export function claimReview(db: any, code: unknown, table: unknown, now = new Date(), validator?: { id: string; name: string }) {
   const clean = String(code || '').trim().toUpperCase();
   if (!clean || clean.length > 100) throw new CommerceError(400, 'Código do voucher inválido.');
   const review = db.reviews.find((r: any) => String(r.rewardCode || '').toUpperCase() === clean);
@@ -117,6 +117,8 @@ export function claimReview(db: any, code: unknown, table: unknown, now = new Da
   if (table != null && (!Number.isInteger(table) || Number(table) < 1 || Number(table) > 10000)) throw new CommerceError(400, 'Mesa inválida.');
   review.rewardClaimed = true; review.claimedAt = now.toISOString();
   if (table != null) review.claimedTable = table;
+  if (validator?.id) review.claimedByUserId = validator.id;
+  if (validator?.name) review.claimedByName = validator.name;
   return review;
 }
 
