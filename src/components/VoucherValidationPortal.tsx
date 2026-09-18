@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Camera, CheckCircle2, LockKeyhole, LogOut, QrCode, ShieldCheck, XCircle } from 'lucide-react';
+import { BrowserQRCodeReader } from '@zxing/browser';
 import { apiValidateReward } from '../lib/api';
 import { getCompanyId, tenantKey } from '../lib/tenant';
 import type { Review } from '../types';
@@ -13,8 +14,7 @@ const voucherFromScan = (value: string) => {
 
 export function VoucherValidationPortal() {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const timerRef = useRef<number | null>(null);
+  const scannerControlsRef = useRef<{ stop: () => void } | null>(null);
   const [code, setCode] = useState('');
   const [cameraOpen, setCameraOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -28,10 +28,8 @@ export function VoucherValidationPortal() {
   });
 
   const stopCamera = () => {
-    if (timerRef.current) window.clearInterval(timerRef.current);
-    timerRef.current = null;
-    streamRef.current?.getTracks().forEach(track => track.stop());
-    streamRef.current = null;
+    scannerControlsRef.current?.stop();
+    scannerControlsRef.current = null;
     setCameraOpen(false);
   };
 
@@ -51,26 +49,26 @@ export function VoucherValidationPortal() {
 
   const openCamera = async () => {
     setMessage('');
-    const Detector = (window as any).BarcodeDetector;
-    if (!navigator.mediaDevices?.getUserMedia || !Detector) {
-      setMessage('A leitura automática não é compatível com este navegador. Digite o código do voucher abaixo.');
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setMessage('Este navegador não liberou acesso à câmera. Verifique a permissão e tente novamente.');
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
-      streamRef.current = stream;
-      if (!videoRef.current) return;
-      videoRef.current.srcObject = stream;
-      await videoRef.current.play();
-      const detector = new Detector({ formats: ['qr_code'] });
       setCameraOpen(true);
-      timerRef.current = window.setInterval(async () => {
-        if (!videoRef.current || loading) return;
-        try {
-          const found = await detector.detect(videoRef.current);
-          if (found?.[0]?.rawValue) { setCode(voucherFromScan(found[0].rawValue)); await validate(found[0].rawValue); }
-        } catch {}
-      }, 700);
+      await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()));
+      if (!videoRef.current) throw new Error('CAMERA_NOT_READY');
+      const reader = new BrowserQRCodeReader();
+      scannerControlsRef.current = await reader.decodeFromConstraints(
+        { audio: false, video: { facingMode: { ideal: 'environment' } } },
+        videoRef.current,
+        (result) => {
+          if (!result || loading) return;
+          const scannedCode = voucherFromScan(result.getText());
+          setCode(scannedCode);
+          stopCamera();
+          void validate(scannedCode);
+        },
+      );
     } catch {
       setMessage('Não foi possível abrir a câmera. Verifique a permissão do navegador e tente novamente.');
       stopCamera();
@@ -87,7 +85,7 @@ export function VoucherValidationPortal() {
     window.location.reload();
   };
 
-  const login = async (event: React.FormEvent) => {
+  const login = async (event: FormEvent) => {
     event.preventDefault();
     setLoginError('');
     if (!loginCpf || !loginPassword) { setLoginError('Informe CPF ou CNPJ e senha.'); return; }
