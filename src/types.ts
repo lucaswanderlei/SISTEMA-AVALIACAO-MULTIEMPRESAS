@@ -12,6 +12,7 @@ export interface Waiter {
   name: string;
   nickname?: string;
   badgeNumber?: string;
+  cpf?: string;
   role: 'Garçom' | 'Garçonete' | 'Atendente' | 'Cumim';
   photoUrl?: string;
   active: boolean;
