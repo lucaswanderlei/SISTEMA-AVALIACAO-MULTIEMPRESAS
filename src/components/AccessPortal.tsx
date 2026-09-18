@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { ArrowRight, Eye, EyeOff, LockKeyhole, ShieldCheck, Sparkles, UserPlus } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Eye, EyeOff, KeyRound, LockKeyhole, Mail, ShieldCheck, UserPlus } from 'lucide-react';
 
 type PortalResponse = {
   success?: boolean;
@@ -18,8 +18,12 @@ export function AccessPortal() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [mode, setMode] = useState<'login' | 'register'>(() => {
-    try { return new URLSearchParams(window.location.search).get('cadastro') === '1' ? 'register' : 'login'; } catch { return 'login'; }
+  const [mode, setMode] = useState<'login' | 'register' | 'forgot' | 'reset'>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('reset_token')) return 'reset';
+      return params.get('cadastro') === '1' ? 'register' : 'login';
+    } catch { return 'login'; }
   });
   const [fullName, setFullName] = useState('');
   const [companyName, setCompanyName] = useState('');
@@ -29,6 +33,10 @@ export function AccessPortal() {
   const [newPassword, setNewPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
   const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetPasswordConfirm, setResetPasswordConfirm] = useState('');
+  const [message, setMessage] = useState('');
+  const resetToken = (() => { try { return new URLSearchParams(window.location.search).get('reset_token') || ''; } catch { return ''; } })();
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -117,12 +125,42 @@ export function AccessPortal() {
     }
   };
 
+  const requestPasswordReset = async (event: FormEvent) => {
+    event.preventDefault();
+    setError(''); setMessage('');
+    if (!login.trim()) { setError('Informe o e-mail ou login usado no cadastro.'); return; }
+    setLoading(true);
+    try {
+      const response = await fetch('/api/auth/forgot-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login: login.trim() }) });
+      const data = (await response.json().catch(() => ({}))) as PortalResponse & { message?: string };
+      if (!response.ok) { setError(data.error || 'Não foi possível solicitar a recuperação.'); return; }
+      setMessage(data.message || 'Se os dados estiverem cadastrados, enviaremos as instruções para o seu e-mail.');
+    } catch { setError('Não foi possível conectar ao sistema. Tente novamente.'); }
+    finally { setLoading(false); }
+  };
+
+  const resetPasswordSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    setError(''); setMessage('');
+    if (!resetToken) { setError('Link de redefinição inválido.'); return; }
+    if (resetPassword.length < 8) { setError('A nova senha deve ter pelo menos 8 caracteres.'); return; }
+    if (resetPassword !== resetPasswordConfirm) { setError('A confirmação da senha não confere.'); return; }
+    setLoading(true);
+    try {
+      const response = await fetch('/api/auth/reset-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: resetToken, password: resetPassword }) });
+      const data = (await response.json().catch(() => ({}))) as PortalResponse & { message?: string };
+      if (!response.ok) { setError(data.error || 'Não foi possível redefinir a senha.'); return; }
+      setMessage(data.message || 'Senha redefinida com sucesso.');
+      setTimeout(() => { setMode('login'); window.history.replaceState({}, '', '/acesso'); }, 1800);
+    } catch { setError('Não foi possível conectar ao sistema. Tente novamente.'); }
+    finally { setLoading(false); }
+  };
+
   return (
     <div style={{ minHeight: '100vh', background: 'linear-gradient(145deg,#f7f8fa 0%,#fff 52%,#f4f0f5 100%)', color: '#18151a', display: 'grid', gridTemplateRows: 'auto 1fr auto', fontFamily: 'Inter, system-ui, sans-serif' }}>
       <header style={{ height: 76, display: 'flex', alignItems: 'center', justifyContent: 'space-between', maxWidth: 1180, width: 'calc(100% - 40px)', margin: '0 auto' }}>
         <a href="https://avaliaeganha.com.br" style={{ textDecoration: 'none', color: 'inherit', display: 'flex', alignItems: 'center', gap: 11, fontWeight: 900, fontSize: 20 }}>
-          <span style={{ width: 38, height: 38, borderRadius: 12, display: 'grid', placeItems: 'center', background: '#5f183e', color: '#fff', boxShadow: '0 8px 20px rgba(95,24,62,.20)' }}><Sparkles size={20}/></span>
-          Avalia <span style={{ color: '#5f183e' }}>e Ganha</span>
+          <img src="/logo-avalia-e-ganha.png" alt="Avalia e Ganha" style={{ width: 190, height: 58, objectFit: 'contain', objectPosition: 'left center' }} />
         </a>
         <a href="https://avaliaeganha.com.br" style={{ color: '#5f183e', fontWeight: 800, textDecoration: 'none', fontSize: 14 }}>Voltar ao site</a>
       </header>
@@ -131,14 +169,14 @@ export function AccessPortal() {
         <div style={{ width: '100%', maxWidth: 440 }}>
           <div style={{ textAlign: 'center', marginBottom: 24 }}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '7px 11px', background: '#f5e9ef', color: '#7a234f', borderRadius: 999, fontWeight: 800, fontSize: 12 }}><ShieldCheck size={15}/> Área segura</span>
-            <h1 style={{ fontSize: 'clamp(30px,5vw,42px)', letterSpacing: '-.045em', lineHeight: 1.02, margin: '14px 0 10px' }}>{mode === 'login' ? 'Entre no seu painel' : 'Crie sua conta grátis'}</h1>
-            <p style={{ margin: 0, color: '#6f6870', lineHeight: 1.55 }}>{mode === 'login' ? 'Use seu e-mail e senha. O sistema identifica automaticamente o seu estabelecimento.' : 'Teste o Avalia e Ganha por 7 dias. Sem cobrança agora.'}</p>
+            <h1 style={{ fontSize: 'clamp(30px,5vw,42px)', letterSpacing: '-.045em', lineHeight: 1.02, margin: '14px 0 10px' }}>{mode === 'login' ? 'Entre no seu painel' : mode === 'register' ? 'Crie sua conta grátis' : mode === 'forgot' ? 'Recupere sua senha' : 'Defina uma nova senha'}</h1>
+            <p style={{ margin: 0, color: '#6f6870', lineHeight: 1.55 }}>{mode === 'login' ? 'Use seu e-mail e senha. O sistema identifica automaticamente o seu estabelecimento.' : mode === 'register' ? 'Teste o Avalia e Ganha por 7 dias. Sem cobrança agora.' : mode === 'forgot' ? 'Informe o e-mail ou login cadastrado para receber o link de redefinição.' : 'Crie uma senha segura para voltar a acessar sua conta.'}</p>
           </div>
 
-          <div style={{ display: 'flex', background: '#f5f1f3', padding: 4, borderRadius: 13, marginBottom: 14 }}>
+          {(mode === 'login' || mode === 'register') && <div style={{ display: 'flex', background: '#f5f1f3', padding: 4, borderRadius: 13, marginBottom: 14 }}>
             <button type="button" onClick={() => { setMode('login'); setError(''); }} style={{ flex: 1, border: 0, borderRadius: 10, padding: '10px 8px', fontWeight: 800, color: mode === 'login' ? '#5f183e' : '#756c72', background: mode === 'login' ? '#fff' : 'transparent', cursor: 'pointer', boxShadow: mode === 'login' ? '0 2px 8px rgba(42,26,37,.08)' : 'none' }}>Entrar</button>
             <button type="button" onClick={() => { setMode('register'); setError(''); }} style={{ flex: 1, border: 0, borderRadius: 10, padding: '10px 8px', fontWeight: 800, color: mode === 'register' ? '#5f183e' : '#756c72', background: mode === 'register' ? '#fff' : 'transparent', cursor: 'pointer', boxShadow: mode === 'register' ? '0 2px 8px rgba(42,26,37,.08)' : 'none' }}>Criar conta</button>
-          </div>
+          </div>}
 
           {mode === 'login' ? <form onSubmit={submit} style={{ background: '#fff', border: '1px solid #ece8eb', borderRadius: 24, padding: 26, boxShadow: '0 22px 55px rgba(42,26,37,.10)' }}>
             <label style={{ display: 'block', fontSize: 13, fontWeight: 800, marginBottom: 7 }}>Login</label>
@@ -156,8 +194,8 @@ export function AccessPortal() {
               <LockKeyhole size={18}/>{loading ? 'Entrando...' : 'Entrar no sistema'}{!loading && <ArrowRight size={18}/>} 
             </button>
 
-            <p style={{ textAlign: 'center', color: '#827b81', fontSize: 12, margin: '16px 0 0', lineHeight: 1.5 }}>Problemas com o acesso? A recuperação de senha continua disponível na página de gerência da sua empresa.</p>
-          </form> : <form onSubmit={register} style={{ background: '#fff', border: '1px solid #ece8eb', borderRadius: 24, padding: 26, boxShadow: '0 22px 55px rgba(42,26,37,.10)' }}>
+            <button type="button" onClick={() => { setMode('forgot'); setError(''); setMessage(''); }} style={{ display: 'block', margin: '16px auto 0', border: 0, background: 'transparent', color: '#5f183e', fontSize: 13, fontWeight: 800, cursor: 'pointer', textDecoration: 'underline' }}>Esqueci minha senha</button>
+          </form> : mode === 'register' ? <form onSubmit={register} style={{ background: '#fff', border: '1px solid #ece8eb', borderRadius: 24, padding: 26, boxShadow: '0 22px 55px rgba(42,26,37,.10)' }}>
             <label style={{ display: 'block', fontSize: 13, fontWeight: 800, marginBottom: 7 }}>Nome completo</label>
             <input autoComplete="name" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Seu nome e sobrenome" maxLength={140} style={{ width: '100%', boxSizing: 'border-box', height: 48, border: '1px solid #ded9dd', borderRadius: 13, padding: '0 14px', fontSize: 16, marginBottom: 14 }} required />
             <label style={{ display: 'block', fontSize: 13, fontWeight: 800, marginBottom: 7 }}>Nome da empresa</label>
@@ -176,6 +214,21 @@ export function AccessPortal() {
             {error && <div style={{ marginTop: 14, padding: '11px 12px', borderRadius: 11, background: '#fff1f1', color: '#a82424', fontSize: 13, fontWeight: 700 }}>{error}</div>}
             <button disabled={loading} type="submit" style={{ width: '100%', height: 52, border: 0, borderRadius: 14, marginTop: 20, background: '#5f183e', color: '#fff', fontSize: 15, fontWeight: 900, cursor: loading ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, opacity: loading ? .72 : 1 }}><UserPlus size={18}/>{loading ? 'Criando conta...' : 'Começar 7 dias grátis'}{!loading && <ArrowRight size={18}/>}</button>
             <p style={{ textAlign: 'center', color: '#827b81', fontSize: 12, margin: '14px 0 0', lineHeight: 1.5 }}>Ao concluir, você entra no painel automaticamente. O plano gratuito de teste dura 7 dias.</p>
+          </form> : mode === 'forgot' ? <form onSubmit={requestPasswordReset} style={{ background: '#fff', border: '1px solid #ece8eb', borderRadius: 24, padding: 26, boxShadow: '0 22px 55px rgba(42,26,37,.10)' }}>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 800, marginBottom: 7 }}>E-mail ou login cadastrado</label>
+            <input autoComplete="username" value={login} onChange={(e) => setLogin(e.target.value)} placeholder="seuemail@empresa.com" style={{ width: '100%', boxSizing: 'border-box', height: 50, border: '1px solid #ded9dd', borderRadius: 13, padding: '0 14px', fontSize: 16, outline: 'none' }} />
+            {error && <div style={{ marginTop: 14, padding: '11px 12px', borderRadius: 11, background: '#fff1f1', color: '#a82424', fontSize: 13, fontWeight: 700 }}>{error}</div>}
+            {message && <div style={{ marginTop: 14, padding: '11px 12px', borderRadius: 11, background: '#edf8f0', color: '#27633a', fontSize: 13, fontWeight: 700 }}>{message}</div>}
+            <button disabled={loading} type="submit" style={{ width: '100%', height: 52, border: 0, borderRadius: 14, marginTop: 20, background: '#5f183e', color: '#fff', fontSize: 15, fontWeight: 900, cursor: loading ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, opacity: loading ? .72 : 1 }}><Mail size={18}/>{loading ? 'Enviando...' : 'Enviar link de recuperação'}<ArrowRight size={18}/></button>
+            <button type="button" onClick={() => { setMode('login'); setError(''); setMessage(''); }} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, margin: '16px auto 0', border: 0, background: 'transparent', color: '#5f183e', fontSize: 13, fontWeight: 800, cursor: 'pointer' }}><ArrowLeft size={16}/>Voltar para entrar</button>
+          </form> : <form onSubmit={resetPasswordSubmit} style={{ background: '#fff', border: '1px solid #ece8eb', borderRadius: 24, padding: 26, boxShadow: '0 22px 55px rgba(42,26,37,.10)' }}>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 800, marginBottom: 7 }}>Nova senha</label>
+            <input autoComplete="new-password" type="password" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} placeholder="Mínimo de 8 caracteres" minLength={8} maxLength={128} style={{ width: '100%', boxSizing: 'border-box', height: 50, border: '1px solid #ded9dd', borderRadius: 13, padding: '0 14px', fontSize: 16, outline: 'none', marginBottom: 16 }} />
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 800, marginBottom: 7 }}>Confirme a nova senha</label>
+            <input autoComplete="new-password" type="password" value={resetPasswordConfirm} onChange={(e) => setResetPasswordConfirm(e.target.value)} placeholder="Repita a nova senha" minLength={8} maxLength={128} style={{ width: '100%', boxSizing: 'border-box', height: 50, border: '1px solid #ded9dd', borderRadius: 13, padding: '0 14px', fontSize: 16, outline: 'none' }} />
+            {error && <div style={{ marginTop: 14, padding: '11px 12px', borderRadius: 11, background: '#fff1f1', color: '#a82424', fontSize: 13, fontWeight: 700 }}>{error}</div>}
+            {message && <div style={{ marginTop: 14, padding: '11px 12px', borderRadius: 11, background: '#edf8f0', color: '#27633a', fontSize: 13, fontWeight: 700 }}>{message}</div>}
+            <button disabled={loading || Boolean(message)} type="submit" style={{ width: '100%', height: 52, border: 0, borderRadius: 14, marginTop: 20, background: '#5f183e', color: '#fff', fontSize: 15, fontWeight: 900, cursor: loading ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, opacity: loading ? .72 : 1 }}><KeyRound size={18}/>{loading ? 'Salvando...' : 'Salvar nova senha'}<ArrowRight size={18}/></button>
           </form>}
         </div>
       </main>
