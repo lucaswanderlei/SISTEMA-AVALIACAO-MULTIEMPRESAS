@@ -2011,7 +2011,7 @@ if (totalEmpresas === 0) {
       const baseUrl = String(process.env.PUBLIC_APP_URL || (host ? `${proto}://${host}` : '')).replace(/\/$/, '');
       const resetUrl = `${baseUrl}/acesso?empresa=${encodeURIComponent(user.empresa_id)}&reset_token=${encodeURIComponent(token)}`;
       try {
-        await sendPasswordResetEmail(String(user.email), resetUrl, String(user.empresa_nome || companyId), String(user.nome || ''));
+        await sendPasswordResetEmail(String(user.email), resetUrl, String(user.empresa_nome || user.empresa_id), String(user.nome || ''));
       } catch (emailErr: any) {
         await pool.query('DELETE FROM avaliacao_password_resets WHERE id=$1', [resetId]).catch(() => {});
         if (emailErr?.code === 'PASSWORD_EMAIL_NOT_CONFIGURED') {
