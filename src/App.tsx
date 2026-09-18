@@ -21,6 +21,7 @@ import {
   EyeOff,
   ChevronRight,
   Wifi,
+  BookOpen,
 } from 'lucide-react';
 import { RestaurantSettings, RewardOption, Review, Waiter } from './types';
 import {
@@ -65,6 +66,7 @@ import { ManagerDashboard } from './components/ManagerDashboard';
 import { SuperAdmin } from './components/SuperAdmin';
 import { LegalPage } from './components/LegalPage';
 import { AccessPortal } from './components/AccessPortal';
+import { HelpCenter } from './components/HelpCenter';
 
 function playChimeSound() {
   try {
@@ -126,6 +128,7 @@ export default function App() {
   const [waiters, setWaiters] = useState<Waiter[]>(loadWaiters);
   const configWriteQueue = useRef<Promise<boolean>>(Promise.resolve(true));
   const [isServerSynced, setIsServerSynced] = useState<boolean>(true);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [companyAccessStatus, setCompanyAccessStatus] = useState<CompanyAccessStatus | null>(null);
   const [companyStatusChecked, setCompanyStatusChecked] = useState(false);
 
@@ -755,6 +758,11 @@ export default function App() {
                 </button>
               </nav>
 
+              <button type="button" onClick={() => setHelpOpen(true)} className="p-2.5 bg-stone-100 hover:bg-rose-50 text-stone-600 hover:text-rose-700 rounded-xl transition cursor-pointer flex items-center gap-1.5 text-xs font-bold border border-stone-200" title="Abrir manual de instruções">
+                <BookOpen className="w-4 h-4" />
+                <span className="hidden lg:inline">Ajuda</span>
+              </button>
+
               <button
                 type="button"
                 id="btn-logout-manager"
@@ -790,6 +798,8 @@ export default function App() {
           )}
         </div>
       </header>
+
+      <HelpCenter open={helpOpen} onClose={() => setHelpOpen(false)} companyName={settings.name} />
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 md:p-8">
@@ -1019,4 +1029,3 @@ export default function App() {
     </div>
   );
 }
-
