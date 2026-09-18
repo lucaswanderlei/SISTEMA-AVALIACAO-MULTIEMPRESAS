@@ -12,7 +12,7 @@ export function tenantFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   return fetch(input, { ...init, headers });
 }
 
-export async function apiManagerLogin(login: string, password: string, billingOnly = false): Promise<{ success: boolean; token?: string; role?: string; accessLevel?: 'owner' | 'manager' | 'viewer'; userId?: string; userName?: string; error?: string }> {
+export async function apiManagerLogin(login: string, password: string, billingOnly = false): Promise<{ success: boolean; token?: string; role?: string; accessLevel?: 'owner' | 'manager' | 'viewer' | 'redeemer'; userId?: string; userName?: string; error?: string }> {
   try {
     const res = await tenantFetch('/api/auth/manager', {
       method: 'POST',
@@ -62,7 +62,7 @@ export async function apiResetPassword(token: string, password: string): Promise
   }
 }
 
-export type CompanyUserAccessLevel = 'owner' | 'manager' | 'viewer';
+export type CompanyUserAccessLevel = 'owner' | 'manager' | 'viewer' | 'redeemer';
 export interface CompanyUser {
   id: string;
   nome: string;
@@ -85,7 +85,7 @@ export async function apiFetchUsers(): Promise<{ success: boolean; users?: Compa
   }
 }
 
-export async function apiCreateUser(payload: { name: string; login: string; email?: string; password: string; accessLevel: 'manager' | 'viewer' }): Promise<{ success: boolean; user?: CompanyUser; error?: string }> {
+export async function apiCreateUser(payload: { name: string; login: string; email?: string; password: string; accessLevel: 'manager' | 'viewer' | 'redeemer' }): Promise<{ success: boolean; user?: CompanyUser; error?: string }> {
   try {
     const res = await tenantFetch('/api/users', {
       method: 'POST',
@@ -308,17 +308,19 @@ export async function apiSaveRewards(rewards: RewardOption[]): Promise<boolean> 
 }
 
 // Sync waiters to server
-export async function apiSaveWaiters(waiters: Waiter[]): Promise<boolean> {
+export interface WaiterCredential { name: string; login: string; temporaryPassword: string; }
+export async function apiSaveWaiters(waiters: Waiter[]): Promise<{ success: boolean; credentials: WaiterCredential[] }> {
   try {
     const res = await tenantFetch('/api/waiters', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(waiters),
     });
-    return res.ok;
+    const data = await res.json().catch(() => ({}));
+    return res.ok ? { success: true, credentials: data.credentials || [] } : { success: false, credentials: [] };
   } catch (err) {
     console.error('[Sync API] Error saving waiters to server:', err);
-    return false;
+    return { success: false, credentials: [] };
   }
 }
 
