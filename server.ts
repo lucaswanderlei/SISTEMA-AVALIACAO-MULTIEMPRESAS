@@ -1949,10 +1949,9 @@ if (totalEmpresas === 0) {
 
   app.post('/api/auth/forgot-password', async (req, res) => {
     try {
-      const companyId = currentCompanyId();
       const login = String(req.body?.login || '').trim().toLowerCase();
       if (!login) return res.status(400).json({ error: 'Informe o login de acesso.' });
-      const resetRateKey = rateLimitKey(req, `password-reset:${companyId}`, login);
+      const resetRateKey = rateLimitKey(req, 'password-reset', login);
       const resetLimit = consumeRateLimit(resetRateKey, 3, 15 * 60 * 1000);
       if (!resetLimit.allowed) {
         res.setHeader('Retry-After', String(resetLimit.retryAfterSeconds));
@@ -1960,12 +1959,13 @@ if (totalEmpresas === 0) {
       }
 
       const result = await pool.query(
-        `SELECT u.id, u.nome, u.email, u.ativo, e.nome AS empresa_nome
+        `SELECT u.id, u.empresa_id, u.nome, u.email, u.ativo, e.nome AS empresa_nome
          FROM avaliacao_usuarios u
          JOIN avaliacao_empresas e ON e.empresa_id=u.empresa_id
-         WHERE u.empresa_id=$1 AND LOWER(u.login)=LOWER($2)
+         WHERE LOWER(COALESCE(u.email,''))=LOWER($1) OR LOWER(u.login)=LOWER($1)
+         ORDER BY CASE WHEN LOWER(COALESCE(u.email,''))=LOWER($1) THEN 0 ELSE 1 END
          LIMIT 1`,
-        [companyId, login]
+        [login]
       );
       const user = result.rows[0];
       // Evita revelar logins inexistentes.
@@ -1983,13 +1983,13 @@ if (totalEmpresas === 0) {
       await pool.query(
         `INSERT INTO avaliacao_password_resets (id, empresa_id, usuario_id, token_hash, expira_em)
          VALUES ($1,$2,$3,$4,NOW() + INTERVAL '30 minutes')`,
-        [resetId, companyId, user.id, tokenHash]
+        [resetId, user.empresa_id, user.id, tokenHash]
       );
 
       const proto = String(req.header('x-forwarded-proto') || req.protocol || 'https').split(',')[0].trim();
       const host = String(req.get('host') || '').trim();
       const baseUrl = String(process.env.PUBLIC_APP_URL || (host ? `${proto}://${host}` : '')).replace(/\/$/, '');
-      const resetUrl = `${baseUrl}/gerencia?empresa=${encodeURIComponent(companyId)}&reset_token=${encodeURIComponent(token)}`;
+      const resetUrl = `${baseUrl}/acesso?empresa=${encodeURIComponent(user.empresa_id)}&reset_token=${encodeURIComponent(token)}`;
       try {
         await sendPasswordResetEmail(String(user.email), resetUrl, String(user.empresa_nome || companyId), String(user.nome || ''));
       } catch (emailErr: any) {
@@ -2009,7 +2009,6 @@ if (totalEmpresas === 0) {
 
   app.post('/api/auth/reset-password', async (req, res) => {
     try {
-      const companyId = currentCompanyId();
       const token = String(req.body?.token || '').trim();
       const password = String(req.body?.password || '').trim();
       if (!token) return res.status(400).json({ error: 'Link de redefinição inválido.' });
@@ -2017,12 +2016,12 @@ if (totalEmpresas === 0) {
 
       const tokenHash = passwordResetTokenHash(token);
       const result = await pool.query(
-        `SELECT r.id AS reset_id, r.usuario_id, u.perfil
+        `SELECT r.id AS reset_id, r.usuario_id, r.empresa_id, u.perfil
          FROM avaliacao_password_resets r
          JOIN avaliacao_usuarios u ON u.id=r.usuario_id
-         WHERE r.empresa_id=$1 AND r.token_hash=$2 AND r.usado_em IS NULL AND r.expira_em>NOW() AND u.ativo=TRUE
+         WHERE r.token_hash=$1 AND r.usado_em IS NULL AND r.expira_em>NOW() AND u.ativo=TRUE
          LIMIT 1`,
-        [companyId, tokenHash]
+        [tokenHash]
       );
       const reset = result.rows[0];
       if (!reset) return res.status(400).json({ error: 'Este link é inválido, já foi utilizado ou expirou.' });
@@ -2033,7 +2032,7 @@ if (totalEmpresas === 0) {
         await client.query('BEGIN');
         await client.query('UPDATE avaliacao_usuarios SET senha_hash=$2, atualizado_em=NOW() WHERE id=$1', [reset.usuario_id, nextHash]);
         if (normalizeAccessLevel(reset.perfil) === 'owner') {
-          await client.query('UPDATE avaliacao_empresas SET senha_hash=$2, atualizado_em=NOW() WHERE empresa_id=$1', [companyId, nextHash]);
+          await client.query('UPDATE avaliacao_empresas SET senha_hash=$2, atualizado_em=NOW() WHERE empresa_id=$1', [reset.empresa_id, nextHash]);
         }
         await client.query('UPDATE avaliacao_password_resets SET usado_em=NOW() WHERE id=$1', [reset.reset_id]);
         await client.query('COMMIT');
