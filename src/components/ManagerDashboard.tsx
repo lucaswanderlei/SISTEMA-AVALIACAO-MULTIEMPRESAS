@@ -3213,6 +3213,8 @@ return (
             </div>
 
             <div className="p-4 bg-stone-50 border border-stone-200 rounded-2xl space-y-4">
+              {accessLevel === 'superadmin' && (
+                <>
               <div className="flex items-start gap-2.5 text-stone-800 text-xs bg-emerald-50/80 p-3 rounded-xl border border-emerald-200">
                 <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                 <div className="space-y-1">
@@ -3326,8 +3328,10 @@ return (
                     <span>✓ Dados da API do WhatsApp salvos com sucesso no banco de dados permanente! Não serão resetados.</span>
                   </div>
                 )}
+                </>
+              )}
 
-                {/* Clean Official Message Preview */}
+                {/* Texto da mensagem: disponível para a empresa */}
                 <div className="p-3.5 bg-white border border-stone-200 rounded-xl space-y-1.5 shadow-xs">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-bold text-stone-700 flex items-center gap-1.5">
@@ -3359,7 +3363,7 @@ return (
                       >
                         Restaurar texto padrão
                       </button>
-                      <span className="text-[10px] text-stone-500">Clique em “Salvar Dados da API no Banco” para gravar.</span>
+                      <span className="text-[10px] text-stone-500">As alterações são salvas automaticamente.</span>
                     </div>
                     <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 text-[11px] font-mono text-stone-800 whitespace-pre-wrap leading-relaxed">
                       {renderVoucherPreview(settings.voucherMessageTemplate || DEFAULT_VOUCHER_TEMPLATE, settings)}
