@@ -46,6 +46,7 @@ import {
   UserX,
   RefreshCw,
   History,
+  QrCode,
 } from 'lucide-react';
 import { RestaurantSettings, RewardOption, Review, Waiter } from '../types';
 import { CustomerDatabaseView } from './CustomerDatabaseView';
@@ -72,6 +73,7 @@ interface ManagerDashboardProps {
   onClearAllReviews?: () => void;
   onUpdateReviewsList?: (reviews: Review[]) => void;
   onSaveDatabase?: () => Promise<boolean>;
+  onOpenQrDisplay?: () => void;
   accessLevel?: 'owner' | 'manager' | 'viewer' | 'redeemer' | 'superadmin';
 }
 
@@ -144,12 +146,19 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
   onClearAllReviews,
   onUpdateReviewsList,
   onSaveDatabase,
+  onOpenQrDisplay,
   onConsumptionItemsChange,
   companyPlan,
   accessLevel = 'owner',
 }) => {
   const isViewer = accessLevel === 'viewer';
   const isOwner = accessLevel === 'owner' || accessLevel === 'superadmin';
+  const pillarLabels = {
+    service: settings.servicePillarName?.trim() || 'Atendimento & Garçons',
+    ambiance: settings.ambiancePillarName?.trim() || 'Ambiente & Conforto',
+    products: settings.productsPillarName?.trim() || 'Produtos & Gastronomia',
+    waitTime: settings.waitTimePillarName?.trim() || 'Tempo de Espera',
+  };
   // Tabs within dashboard
   const [activeTab, setActiveTab] = useState<
     'ai' | 'items' | 'metrics' | 'reviews' | 'customers' | 'waiters' | 'validator' | 'rewards' | 'reports' | 'settings'
@@ -1280,6 +1289,16 @@ return (
           <span>Configurações</span>
         </button>
         )}
+        {!isViewer && onOpenQrDisplay && (
+          <button
+            type="button"
+            onClick={onOpenQrDisplay}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition text-stone-600 hover:bg-stone-100 hover:text-stone-900"
+          >
+            <QrCode className="w-4 h-4" />
+            <span>Placas & Totens QR</span>
+          </button>
+        )}
       </div>
 
       {/* TAB 1: METRICS */}
@@ -1367,7 +1386,7 @@ return (
                       <Users className="w-5 h-5" />
                     </div>
                     <div>
-                      <h4 className="font-bold text-stone-900 text-sm">Atendimento & Garçons</h4>
+                      <h4 className="font-bold text-stone-900 text-sm">{pillarLabels.service}</h4>
                       <p className="text-xs text-stone-500">Simpatia, educação e presteza</p>
                     </div>
                   </div>
@@ -1393,7 +1412,7 @@ return (
                       <HeartHandshake className="w-5 h-5" />
                     </div>
                     <div>
-                      <h4 className="font-bold text-stone-900 text-sm">Ambiente & Conforto</h4>
+                      <h4 className="font-bold text-stone-900 text-sm">{pillarLabels.ambiance}</h4>
                       <p className="text-xs text-stone-500">Limpeza, som e climatização</p>
                     </div>
                   </div>
@@ -1419,7 +1438,7 @@ return (
                       <UtensilsCrossed className="w-5 h-5" />
                     </div>
                     <div>
-                      <h4 className="font-bold text-stone-900 text-sm">Produtos & Gastronomia</h4>
+                      <h4 className="font-bold text-stone-900 text-sm">{pillarLabels.products}</h4>
                       <p className="text-xs text-stone-500">Sabor, temperatura e apresentação</p>
                     </div>
                   </div>
@@ -1445,7 +1464,7 @@ return (
                       <Clock className="w-5 h-5" />
                     </div>
                     <div>
-                      <h4 className="font-bold text-stone-900 text-sm">Tempo de Espera</h4>
+                      <h4 className="font-bold text-stone-900 text-sm">{pillarLabels.waitTime}</h4>
                       <p className="text-xs text-stone-500">Chegada dos pratos e da conta</p>
                     </div>
                   </div>
@@ -2531,18 +2550,6 @@ return (
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                {onSaveDatabase && (
-                  <button
-                    type="button"
-                    onClick={handleManualSaveDb}
-                    disabled={isSavingDb}
-                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white rounded-lg text-xs font-bold transition shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
-                    title="Salvar brindes no banco de dados permanente do servidor"
-                  >
-                    <Database className="w-3.5 h-3.5" />
-                    <span>{isSavingDb ? 'Salvando...' : saveDbStatus ? '✓ Salvo!' : 'Salvar Brindes no Banco'}</span>
-                  </button>
-                )}
                 <div className="text-xs font-semibold text-stone-600 bg-stone-100 px-3 py-1.5 rounded-lg">
                   Total de peso ativo: {rewards.filter((r) => r.enabled).reduce((acc, curr) => acc + (curr.probabilityWeight || 10), 0)} pts
                 </div>
@@ -3043,18 +3050,19 @@ return (
 
               const criteria: Array<{
                 key: 'serviceRatingIcon' | 'ambianceRatingIcon' | 'productsRatingIcon' | 'waitTimeRatingIcon';
+                nameKey: 'servicePillarName' | 'ambiancePillarName' | 'productsPillarName' | 'waitTimePillarName';
                 label: string;
                 description: string;
               }> = [
-                { key: 'serviceRatingIcon', label: 'Atendimento & Garçons', description: 'Ícone usado na nota do atendimento.' },
-                { key: 'ambianceRatingIcon', label: 'Ambiente & Conforto', description: 'Ícone usado na nota do ambiente.' },
-                { key: 'productsRatingIcon', label: 'Produtos & Gastronomia', description: 'Ícone usado na nota dos produtos.' },
-                { key: 'waitTimeRatingIcon', label: 'Tempo de Espera', description: 'Ícone usado na nota do tempo de espera.' },
+                { key: 'serviceRatingIcon', nameKey: 'servicePillarName', label: 'Atendimento & Garçons', description: 'Ícone usado na nota do atendimento.' },
+                { key: 'ambianceRatingIcon', nameKey: 'ambiancePillarName', label: 'Ambiente & Conforto', description: 'Ícone usado na nota do ambiente.' },
+                { key: 'productsRatingIcon', nameKey: 'productsPillarName', label: 'Produtos & Gastronomia', description: 'Ícone usado na nota dos produtos.' },
+                { key: 'waitTimeRatingIcon', nameKey: 'waitTimePillarName', label: 'Tempo de Espera', description: 'Ícone usado na nota do tempo de espera.' },
               ];
 
               return (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {criteria.map(({ key, label, description }) => {
+                  {criteria.map(({ key, nameKey, label, description }) => {
                     const selectedIcon = (settings[key] || settings.ratingIcon || 'coxinha') as RatingIconType;
                     return (
                       <div key={key} className="rounded-xl border border-stone-200 bg-stone-50/60 p-3">
@@ -3067,6 +3075,13 @@ return (
                             <div className="text-[10px] text-stone-500">{description}</div>
                           </div>
                         </div>
+                        <label className="block text-[10px] font-bold text-stone-600 mb-1.5">Nome do pilar</label>
+                        <input
+                          value={settings[nameKey] || label}
+                          onChange={(e) => onUpdateSettings({ ...settings, [nameKey]: e.target.value.slice(0, 60) })}
+                          placeholder={label}
+                          className="w-full text-xs p-2.5 rounded-xl border border-stone-200 bg-white focus:border-rose-500 outline-none font-semibold text-stone-700 mb-2"
+                        />
                         <select
                           value={selectedIcon}
                           onChange={(e) =>

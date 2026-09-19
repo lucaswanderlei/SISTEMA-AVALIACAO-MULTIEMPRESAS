@@ -817,23 +817,18 @@ const AcrylicStandCard: React.FC<AcrylicStandCardProps> = ({
       <div className="absolute -top-16 -right-16 w-36 h-36 bg-rose-500/25 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute -bottom-16 -left-16 w-36 h-36 bg-amber-500/20 rounded-full blur-3xl pointer-events-none" />
 
-      {/* Brand Header */}
-      <div className="flex items-center justify-center gap-2.5 mb-2">
-        <div className="w-10 h-10 rounded-xl bg-white overflow-hidden flex items-center justify-center shadow-md border border-stone-200">
-          {settings.logoUrl ? (
-            <img src={settings.logoUrl} alt={settings.name} className="w-full h-full object-contain" />
-          ) : (
-            <UtensilsCrossed className="w-5 h-5 text-rose-700" />
-          )}
-        </div>
-        <div className="text-left">
-          <div className={`text-base font-black tracking-tight leading-none ${['premium','prize','table'].includes(template) ? 'text-white' : 'text-stone-950'}`}>
-            {settings.name}
+      {/* Brand Header: no totem a logo ocupa toda a área de destaque. */}
+      <div className="mb-3">
+        {settings.logoUrl ? (
+          <div className="w-full h-24 rounded-2xl bg-white overflow-hidden shadow-md border border-stone-200">
+            <img src={settings.logoUrl} alt={settings.name} className="w-full h-full object-cover" />
           </div>
-          <div className={`text-[10px] leading-tight mt-0.5 ${['premium','prize','table'].includes(template) ? 'text-stone-300' : 'text-stone-600'}`}>
-            {settings.tagline}
+        ) : (
+          <div className="flex items-center justify-center gap-2.5">
+            <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center shadow-md border border-stone-200"><UtensilsCrossed className="w-5 h-5 text-rose-700" /></div>
+            <div className="text-left"><div className={`text-base font-black tracking-tight leading-none ${['premium','prize','table'].includes(template) ? 'text-white' : 'text-stone-950'}`}>{settings.name}</div><div className={`text-[10px] leading-tight mt-0.5 ${['premium','prize','table'].includes(template) ? 'text-stone-300' : 'text-stone-600'}`}>{settings.tagline}</div></div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Badge */}

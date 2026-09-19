@@ -59,6 +59,12 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
     .map((tag) => String(tag || '').trim())
     .filter(Boolean);
   const visibleQuickTags = quickTagsOptions.length > 0 ? quickTagsOptions : QUICK_TAGS_OPTIONS;
+  const pillarLabels = {
+    service: settings.servicePillarName?.trim() || 'Atendimento & Garçons',
+    ambiance: settings.ambiancePillarName?.trim() || 'Ambiente & Conforto',
+    products: settings.productsPillarName?.trim() || 'Produtos & Gastronomia',
+    waitTime: settings.waitTimePillarName?.trim() || 'Tempo de Espera',
+  };
 
   // Table Selection State
   const [selectedTable, setSelectedTable] = useState<number>(tableNumber && tableNumber > 0 ? tableNumber : 0);
@@ -588,7 +594,7 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
             {/* Atendimento */}
             <RatingStarScale
               id="service"
-              label="Atendimento & Garçons"
+              label={pillarLabels.service}
               subtitle="Cordialidade, atenção, simpatia e presteza"
               icon={<Users className="w-5 h-5" />}
               value={ratings.service}
@@ -600,7 +606,7 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
             {/* Ambiente */}
             <RatingStarScale
               id="ambiance"
-              label="Ambiente & Conforto"
+              label={pillarLabels.ambiance}
               subtitle="Limpeza, climatização, iluminação e música"
               icon={<HeartHandshake className="w-5 h-5" />}
               value={ratings.ambiance}
@@ -612,7 +618,7 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
             {/* Produtos / Comida */}
             <RatingStarScale
               id="products"
-              label="Produtos & Gastronomia"
+              label={pillarLabels.products}
               subtitle="Sabor, temperatura, frescor e apresentação"
               icon={<UtensilsCrossed className="w-5 h-5" />}
               value={ratings.products}
@@ -624,7 +630,7 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
             {/* Tempo de Espera */}
             <RatingStarScale
               id="waitTime"
-              label="Tempo de Espera"
+              label={pillarLabels.waitTime}
               subtitle="Velocidade da chegada das bebidas, pratos e conta"
               icon={<Clock className="w-5 h-5" />}
               value={ratings.waitTime}
