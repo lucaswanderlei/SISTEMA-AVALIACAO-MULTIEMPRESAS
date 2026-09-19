@@ -817,11 +817,11 @@ const AcrylicStandCard: React.FC<AcrylicStandCardProps> = ({
       <div className="absolute -top-16 -right-16 w-36 h-36 bg-rose-500/25 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute -bottom-16 -left-16 w-36 h-36 bg-amber-500/20 rounded-full blur-3xl pointer-events-none" />
 
-      {/* Brand Header: no totem a logo ocupa toda a área de destaque. */}
+      {/* Brand Header: logo quadrada, preservando a proporção original. */}
       <div className="mb-3">
         {settings.logoUrl ? (
-          <div className="w-full h-24 rounded-2xl bg-white overflow-hidden shadow-md border border-stone-200">
-            <img src={settings.logoUrl} alt={settings.name} className="w-full h-full object-cover" />
+          <div className="w-24 h-24 mx-auto rounded-2xl bg-white overflow-hidden shadow-md border border-stone-200 p-1">
+            <img src={settings.logoUrl} alt={settings.name} className="w-full h-full object-contain" />
           </div>
         ) : (
           <div className="flex items-center justify-center gap-2.5">
