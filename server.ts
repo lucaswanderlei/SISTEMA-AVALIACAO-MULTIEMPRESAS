@@ -1107,7 +1107,14 @@ if (totalEmpresas === 0) {
       return next();
     }
 
-    const companyId = normalizeCompanyId(requestedCompany || 'demo');
+    // Depois do login, o servidor é a fonte de verdade da empresa. Isso evita
+    // que um localStorage antigo, uma aba aberta ou uma URL sem ?empresa faça
+    // uma alteração ser recusada (ou apontar para a empresa demo).
+    const authenticatedSession = req.path.startsWith('/api/auth/') ? null : getAuthSession(req);
+    const sessionCompanyId = authenticatedSession?.role === 'manager'
+      ? authenticatedSession.companyId
+      : undefined;
+    const companyId = normalizeCompanyId(sessionCompanyId || requestedCompany || 'demo');
 
     // Super Admin and health do not depend on a tenant DB being loaded.
     if (req.path.startsWith('/api/admin/') || req.path === '/api/health' || req.path.startsWith('/api/billing')) {
