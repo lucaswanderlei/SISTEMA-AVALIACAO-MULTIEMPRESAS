@@ -48,8 +48,6 @@ import {
   apiDeleteReview,
   apiSubmitReview,
   apiValidateReward,
-  apiSaveSettings,
-  apiSaveRewards,
   apiSaveWaiters,
   apiClearAllReviews,
   apiSyncPush,
@@ -128,6 +126,8 @@ export default function App() {
   const [rewards, setRewards] = useState<RewardOption[]>(loadRewards);
   const [reviews, setReviews] = useState<Review[]>(loadReviews);
   const [waiters, setWaiters] = useState<Waiter[]>(loadWaiters);
+  const settingsRef = useRef<RestaurantSettings>(settings);
+  const rewardsRef = useRef<RewardOption[]>(rewards);
   const configWriteQueue = useRef<Promise<boolean>>(Promise.resolve(true));
   const [isServerSynced, setIsServerSynced] = useState<boolean>(true);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -295,6 +295,7 @@ export default function App() {
 
         if (syncData.settings) {
           const serverSettings = syncData.settings as RestaurantSettings;
+          settingsRef.current = serverSettings;
           setSettings(serverSettings);
           saveSettings(serverSettings);
           saveWhatsAppConfig({
@@ -305,6 +306,7 @@ export default function App() {
         }
 
         if (Array.isArray(syncData.rewards)) {
+          rewardsRef.current = syncData.rewards;
           setRewards(syncData.rewards);
           saveRewards(syncData.rewards);
         }
@@ -546,17 +548,26 @@ export default function App() {
     void next.then(ok => { if (!ok) showToast('⚠️ O servidor não confirmou a alteração. Use Salvar novamente.'); });
     return next;
   };
+
+  // Settings and rewards share the same PostgreSQL document. Sending an
+  // atomic snapshot prevents a fast sequence of edits from one area undoing
+  // the most recent change from another area.
+  const persistCurrentConfiguration = () =>
+    apiSyncPush({ settings: settingsRef.current, rewards: rewardsRef.current }).then((response) => response.success);
+
   const handleRewardsChange = (newRewards: RewardOption[]) => {
+    rewardsRef.current = newRewards;
     setRewards(newRewards);
     saveRewards(newRewards);
-    return persistConfig(() => apiSaveRewards(newRewards));
+    return persistConfig(persistCurrentConfiguration);
   };
   const handleSettingsChange = (newSettings: RestaurantSettings) => {
+    settingsRef.current = newSettings;
     setSettings(newSettings);
     saveSettings(newSettings);
     saveWhatsAppConfig({ whatsappApiUrl: newSettings.whatsappApiUrl, whatsappApiToken: newSettings.whatsappApiToken,
       whatsappCustomMessage: newSettings.whatsappCustomMessage });
-    return persistConfig(() => apiSaveSettings(newSettings));
+    return persistConfig(persistCurrentConfiguration);
   };
   const handleWaitersChange = async (newWaiters: Waiter[]) => {
     setWaiters(newWaiters);
@@ -832,7 +843,10 @@ export default function App() {
         {activeView === 'manager' && isManagerLoggedIn && (!companyBlocked || managerCanBypassSubscription) && (
           <ManagerDashboard
             companyPlan={companyAccessStatus?.accessible ? companyAccessStatus.company?.plan : undefined}
-            onConsumptionItemsChange={items => setSettings(previous => { const next = { ...previous, consumptionItems: items }; saveSettings(next); return next; })}
+            onConsumptionItemsChange={items => {
+              const next = { ...settingsRef.current, consumptionItems: items };
+              void handleSettingsChange(next);
+            }}
             reviews={reviews}
             rewards={rewards}
             settings={settings}
