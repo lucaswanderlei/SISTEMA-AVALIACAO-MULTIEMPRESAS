@@ -980,14 +980,15 @@ export default function App() {
             {!showForgotPassword ? (
               <form onSubmit={handleVerifyPin} className="space-y-4">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-stone-700">Login</label>
+                  <label className="text-xs font-bold text-stone-700">CPF (ou CNPJ do proprietário)</label>
                   <input
                     type="text"
                     autoFocus
                     autoComplete="username"
                     value={loginInput}
-                    onChange={(e) => { setLoginInput(e.target.value); if (pinError) setPinError(''); }}
-                    placeholder="Login da empresa"
+                    inputMode="numeric"
+                    onChange={(e) => { setLoginInput(e.target.value.replace(/\D/g, '').slice(0, 14)); if (pinError) setPinError(''); }}
+                    placeholder="CPF ou CNPJ do proprietário"
                     className="w-full py-3 px-4 text-sm font-bold bg-stone-50 border-2 border-stone-300 rounded-2xl outline-none focus:border-rose-600 focus:bg-white"
                   />
                 </div>
