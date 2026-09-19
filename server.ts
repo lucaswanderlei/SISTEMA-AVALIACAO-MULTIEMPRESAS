@@ -2529,6 +2529,12 @@ if (totalEmpresas === 0) {
       const companyId = currentCompanyId();
       const incoming = req.body && typeof req.body === 'object' ? { ...req.body } : {};
       delete incoming.consumptionItems; // Catalog changes use their dedicated transactional routes.
+      if (getAuthSession(req)?.role !== 'superadmin') {
+        delete incoming.whatsappApiUrl;
+        delete incoming.whatsappApiToken;
+        delete incoming.whatsappTemplateName;
+        delete incoming.whatsappTemplateLanguage;
+      }
       const incomingName = String(incoming.name || '').trim();
 
       const result = await pool.query(
@@ -2599,7 +2605,7 @@ if (totalEmpresas === 0) {
   });
 
   // Dedicated WhatsApp API Settings Update Endpoint
-  app.post('/api/settings/whatsapp', requireCompanyEditor, async (req, res) => {
+  app.post('/api/settings/whatsapp', requireSuperAdmin, async (req, res) => {
     try {
       const { whatsappApiUrl, whatsappApiToken, whatsappCustomMessage, autoSendWhatsApp, autoSendMode } = req.body || {};
       if (whatsappApiUrl !== undefined) {
@@ -2731,7 +2737,14 @@ if (totalEmpresas === 0) {
     const client = await pool.connect();
     try {
       const companyId = currentCompanyId();
-      const { settings, rewards, waiters, reviews } = req.body || {};
+      const { settings: receivedSettings, rewards, waiters, reviews } = req.body || {};
+      const settings = receivedSettings && typeof receivedSettings === 'object' ? { ...receivedSettings } : receivedSettings;
+      if (settings && getAuthSession(req)?.role !== 'superadmin') {
+        delete settings.whatsappApiUrl;
+        delete settings.whatsappApiToken;
+        delete settings.whatsappTemplateName;
+        delete settings.whatsappTemplateLanguage;
+      }
 
       await client.query('BEGIN');
       const locked = await client.query(
@@ -2805,8 +2818,8 @@ if (totalEmpresas === 0) {
     return values.reduce((a, b) => a + b, 0) / Math.max(1, values.length);
   }
 
-  // Export detalhado de avaliações. Disponível para qualquer usuário autenticado da empresa.
-  app.get('/api/exports/reviews.csv', requireCompanyManager, (_req, res) => {
+  // Exportações e backups contêm dados pessoais: somente o SuperAdmin pode acessá-los.
+  app.get('/api/exports/reviews.csv', requireSuperAdmin, (_req, res) => {
     const rows = Array.isArray(activeDb.reviews) ? activeDb.reviews : [];
     const headers = ['ID','Nome','Telefone','Mesa','Atendente','Nota Atendimento','Nota Ambiente','Nota Produtos','Nota Espera','Media Geral','Destaques','Critica','Sugestao','Brinde','Codigo Voucher','Resgatado','Aviso Privacidade','Versao Aviso','Aceitou Ofertas','Data Avaliacao','Data Resgate','Itens Consumidos'];
     const lines = rows.map((r: any) => [
@@ -2823,7 +2836,7 @@ if (totalEmpresas === 0) {
   });
 
   // Export do CRM consolidado: uma linha por telefone, com histórico resumido.
-  app.get('/api/exports/customers.csv', requireCompanyManager, (_req, res) => {
+  app.get('/api/exports/customers.csv', requireSuperAdmin, (_req, res) => {
     const reviews = Array.isArray(activeDb.reviews) ? [...activeDb.reviews] : [];
     reviews.sort((a: any, b: any) => new Date(String(a.createdAt || 0)).getTime() - new Date(String(b.createdAt || 0)).getTime());
     const grouped = new Map<string, any>();
@@ -2853,8 +2866,8 @@ if (totalEmpresas === 0) {
     return res.send('\uFEFFsep=;\n' + headers.map(csvCell).join(';') + '\n' + lines.join('\n'));
   });
 
-  // Backup completo da empresa. Proprietário ou SuperAdmin.
-  app.get('/api/database/export', requireCompanyOwner, async (_req, res) => {
+  // Backup completo da empresa. Somente SuperAdmin.
+  app.get('/api/database/export', requireSuperAdmin, async (_req, res) => {
     const companyId = currentCompanyId();
     const company = await pool.query('SELECT empresa_id,nome,slug,plano,status_assinatura,vencimento_em,criado_em,atualizado_em FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1', [companyId]);
     const concreteDb = tenantDbs.get(companyId) || await loadCompanyDb(companyId);
@@ -2873,7 +2886,7 @@ if (totalEmpresas === 0) {
   });
 
   // Restaura backup v2 ou o formato JSON legado.
-  app.post('/api/database/import', requireCompanyOwner, async (req, res) => {
+  app.post('/api/database/import', requireSuperAdmin, async (req, res) => {
     try {
       const wrapper = req.body;
       const companyId = currentCompanyId();
