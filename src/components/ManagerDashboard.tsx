@@ -3484,7 +3484,8 @@ return (
             </div>
           )}
 
-          {/* Backup & Exportação */}
+          {/* Backup & Exportação: somente administrador geral */}
+          {accessLevel === 'superadmin' && (
           <div className="p-5 sm:p-6 bg-white rounded-3xl border border-stone-200 shadow-sm space-y-4">
             <div className="flex items-center gap-2.5">
               <span className="p-2.5 bg-sky-100 text-sky-700 rounded-2xl"><Database className="w-5 h-5" /></span>
@@ -3522,6 +3523,7 @@ return (
             {backupFeedback && <div className={`p-3 rounded-xl text-xs font-bold flex items-center gap-2 ${backupFeedback.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'}`}>{backupFeedback.type === 'success' ? <CheckCircle2 className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}<span>{backupFeedback.message}</span></div>}
             {isOwner && <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3">O backup completo pode conter dados pessoais de clientes e credenciais de integrações configuradas pela empresa. Guarde o arquivo em local seguro.</p>}
           </div>
+          )}
 
           {isOwner && (<>
           {/* Security & Access Protection Card */}
