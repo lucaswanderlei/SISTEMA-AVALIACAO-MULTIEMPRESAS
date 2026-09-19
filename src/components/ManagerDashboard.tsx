@@ -699,6 +699,7 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
   const [waiterCpf, setWaiterCpf] = useState('');
   const [waiterRole, setWaiterRole] = useState<'Garçom' | 'Garçonete' | 'Atendente' | 'Cumim'>('Garçom');
   const [waiterActive, setWaiterActive] = useState(true);
+  const [isSavingWaiter, setIsSavingWaiter] = useState(false);
 
   // Validator state
   const [inputCode, setInputCode] = useState('');
@@ -1175,45 +1176,55 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
 
   const handleSaveWaiter = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSavingWaiter) return;
     if (!waiterName.trim() || waiterCpf.replace(/\D/g, '').length !== 11) {
       window.alert('Informe o CPF do funcionário com 11 números. Ele será usado como login.');
       return;
     }
 
-    if (editingWaiterId) {
-      const updated = waiters.map((w) =>
-        w.id === editingWaiterId
-          ? {
-              ...w,
-              name: waiterName.trim(),
-              nickname: waiterNickname.trim() || undefined,
-              badgeNumber: waiterBadgeNumber.trim() || undefined,
-              cpf: waiterCpf.replace(/\D/g, ''),
-              role: waiterRole,
-              active: waiterActive,
-            }
-          : w
-      );
-      await onUpdateWaiters(updated);
-    } else {
-      const newW: Waiter = {
-        id: `w-${Date.now()}`,
-        name: waiterName.trim(),
-        nickname: waiterNickname.trim() || undefined,
-        badgeNumber: waiterBadgeNumber.trim() || undefined,
-        cpf: waiterCpf.replace(/\D/g, ''),
-        role: waiterRole,
-        active: waiterActive,
-        createdAt: new Date().toISOString(),
-      };
-      const updated = [...waiters, newW];
-      const saved = await onUpdateWaiters(updated);
+    setIsSavingWaiter(true);
+    try {
+      let saved: { success: boolean; credentials: WaiterCredential[] };
+      if (editingWaiterId) {
+        const updated = waiters.map((w) =>
+          w.id === editingWaiterId
+            ? {
+                ...w,
+                name: waiterName.trim(),
+                nickname: waiterNickname.trim() || undefined,
+                badgeNumber: waiterBadgeNumber.trim() || undefined,
+                cpf: waiterCpf.replace(/\D/g, ''),
+                role: waiterRole,
+                active: waiterActive,
+              }
+            : w
+        );
+        saved = await onUpdateWaiters(updated);
+      } else {
+        const newW: Waiter = {
+          id: `w-${Date.now()}`,
+          name: waiterName.trim(),
+          nickname: waiterNickname.trim() || undefined,
+          badgeNumber: waiterBadgeNumber.trim() || undefined,
+          cpf: waiterCpf.replace(/\D/g, ''),
+          role: waiterRole,
+          active: waiterActive,
+          createdAt: new Date().toISOString(),
+        };
+        saved = await onUpdateWaiters([...waiters, newW]);
+      }
+
+      if (!saved.success) return;
       if (saved.success && saved.credentials.length) {
         const access = saved.credentials.map(item => `${item.name}\nCPF (login): ${item.login}\nSenha temporária: ${item.temporaryPassword}`).join('\n\n');
         window.alert(`Acesso de validação criado. Anote e entregue estas credenciais ao funcionário:\n\n${access}`);
       }
+      setIsWaiterModalOpen(false);
+    } catch {
+      window.alert('Não foi possível salvar o funcionário no banco. Tente novamente.');
+    } finally {
+      setIsSavingWaiter(false);
     }
-    setIsWaiterModalOpen(false);
   };
 
   const handleToggleWaiterActive = (id: string) => {
@@ -1231,19 +1242,6 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
     void onUpdateWaiters(updated);
     setWaiterToDelete(null);
   };
-
-  const copyValidatorLink = async () => {
-    const link = `${window.location.origin}/validar-brinde?empresa=${encodeURIComponent(getCompanyId())}`;
-    try {
-      await navigator.clipboard.writeText(link);
-      window.alert('Link dos validadores copiado. Envie-o apenas à equipe desta empresa.');
-    } catch {
-      window.prompt('Copie o link dos validadores:', link);
-    }
-  };
-
-  
- 
 
 return (
     <div id="manager-dashboard-container" className="space-y-6">
@@ -2111,23 +2109,6 @@ return (
             </div>
 
             <div className="flex items-center gap-2 shrink-0 flex-wrap">
-              <button type="button" onClick={() => void copyValidatorLink()} className="px-3.5 py-2.5 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-bold transition shadow-md shadow-sky-200 flex items-center justify-center gap-1.5">
-                <KeyRound className="w-4 h-4" />
-                <span>Copiar link dos validadores</span>
-              </button>
-              {onSaveDatabase && (
-                <button
-                  type="button"
-                  onClick={handleManualSaveDb}
-                  disabled={isSavingDb}
-                  className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white rounded-xl text-xs font-bold transition shadow-md shadow-emerald-200 flex items-center justify-center gap-1.5 cursor-pointer"
-                  title="Salvar garçons no banco de dados permanente do servidor"
-                >
-                  <Database className="w-4 h-4" />
-                  <span>{isSavingDb ? 'Salvando...' : saveDbStatus ? '✓ Banco Salvo!' : 'Salvar Garçons no Banco'}</span>
-                </button>
-              )}
-
               <button
                 type="button"
                 onClick={handleOpenAddWaiter}
@@ -2402,6 +2383,7 @@ return (
                   <button
                     type="button"
                     onClick={() => setIsWaiterModalOpen(false)}
+                    disabled={isSavingWaiter}
                     className="p-1 rounded-lg text-stone-400 hover:text-stone-600"
                   >
                     <X className="w-5 h-5" />
@@ -2495,9 +2477,10 @@ return (
                     </button>
                     <button
                       type="submit"
-                      className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition shadow-sm"
+                      disabled={isSavingWaiter}
+                      className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white text-xs font-bold transition shadow-sm"
                     >
-                      {editingWaiterId ? 'Atualizar Atendente' : 'Salvar Atendente'}
+                      {isSavingWaiter ? 'Salvando no banco...' : editingWaiterId ? 'Atualizar Atendente' : 'Salvar Atendente'}
                     </button>
                   </div>
                 </form>
