@@ -434,9 +434,9 @@ export function SuperAdmin() {
 
   const saveCompany = async (company: Company) => {
     const cleanName = editingName.trim();
-    const cleanLogin = editingLogin.trim().toLowerCase();
-    if (!cleanName || cleanLogin.length < 3) {
-      setError('Informe nome e login válidos.');
+    const cleanLogin = editingLogin.replace(/\D/g, '');
+    if (!cleanName || (cleanLogin.length !== 11 && cleanLogin.length !== 14)) {
+      setError('Informe nome e CPF/CNPJ válidos.');
       return;
     }
     setError('');
@@ -677,12 +677,11 @@ export function SuperAdmin() {
               onChange={(e) => {
                 const value = e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
                 setSlug(value);
-                if (!companyLogin) setCompanyLogin(value);
               }}
               placeholder="identificador-ex: pizzaria-teste"
               className="border border-stone-300 rounded-xl px-4 py-3"
             />
-            <input required value={companyLogin} onChange={(e) => setCompanyLogin(e.target.value.toLowerCase())} placeholder="Login da empresa" className="border border-stone-300 rounded-xl px-4 py-3" />
+            <input required inputMode="numeric" value={companyLogin} onChange={(e) => setCompanyLogin(e.target.value.replace(/\D/g, '').slice(0, 14))} placeholder="CPF ou CNPJ do proprietário" className="border border-stone-300 rounded-xl px-4 py-3" />
             <div className="relative">
               <input required minLength={6} type={showCompanyPassword ? 'text' : 'password'} value={companyPassword} onChange={(e) => setCompanyPassword(e.target.value)} placeholder="Senha inicial" className="w-full border border-stone-300 rounded-xl px-4 py-3 pr-11" />
               <button type="button" onClick={() => setShowCompanyPassword((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400">
@@ -742,7 +741,7 @@ export function SuperAdmin() {
                   {editingId === c.empresa_id ? (
                     <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-2">
                       <input value={editingName} onChange={(e) => setEditingName(e.target.value)} placeholder="Nome" className="border border-stone-300 rounded-xl px-3 py-2 font-bold" />
-                      <input value={editingLogin} onChange={(e) => setEditingLogin(e.target.value.toLowerCase())} placeholder="Login" className="border border-stone-300 rounded-xl px-3 py-2 font-bold" />
+                      <input inputMode="numeric" value={editingLogin} onChange={(e) => setEditingLogin(e.target.value.replace(/\D/g, '').slice(0, 14))} placeholder="CPF ou CNPJ do proprietário" className="border border-stone-300 rounded-xl px-3 py-2 font-bold" />
                       <input type="password" minLength={6} value={editingPassword} onChange={(e) => setEditingPassword(e.target.value)} placeholder="Nova senha (opcional)" className="border border-stone-300 rounded-xl px-3 py-2" />
                       <input type="email" value={editingRecoveryEmail} onChange={(e) => setEditingRecoveryEmail(e.target.value)} placeholder="E-mail de recuperação" className="border border-stone-300 rounded-xl px-3 py-2" />
                       <select value={editingPlan} onChange={(e) => setEditingPlan(e.target.value as SubscriptionPlan)} className="border border-stone-300 rounded-xl px-3 py-2 bg-white">
