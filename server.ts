@@ -1491,7 +1491,7 @@ if (totalEmpresas === 0) {
   app.post('/api/admin/companies', requireSuperAdmin, async (req, res) => {
     const empresaId = normalizeCompanyId(req.body?.slug || req.body?.empresaId || req.body?.name);
     const nome = String(req.body?.name || '').trim();
-    const login = String(req.body?.login || empresaId).trim().toLowerCase();
+    const login = digitsOnly(req.body?.login);
     const password = String(req.body?.password || '').trim();
     const recoveryEmail = String(req.body?.recoveryEmail || '').trim().toLowerCase();
     const plan = normalizeSubscriptionPlan(req.body?.plan);
@@ -1500,7 +1500,7 @@ if (totalEmpresas === 0) {
     let expiresAt = normalizeExpiration(rawExpiresAt);
 
     if (!nome || empresaId === 'demo') return res.status(400).json({ error: 'Informe nome e slug válidos.' });
-    if (login.length < 3) return res.status(400).json({ error: 'O login da empresa deve ter pelo menos 3 caracteres.' });
+    if (!isValidCpf(login) && !isValidCnpj(login)) return res.status(400).json({ error: 'Informe um CPF ou CNPJ válido para o acesso principal.' });
     if (password.length < 6) return res.status(400).json({ error: 'A senha da empresa deve ter pelo menos 6 caracteres.' });
     if (!isValidEmail(recoveryEmail)) return res.status(400).json({ error: 'Informe um e-mail de recuperação válido.' });
     if (rawExpiresAt !== undefined && rawExpiresAt !== null && String(rawExpiresAt).trim() !== '' && !expiresAt) {
@@ -1593,11 +1593,11 @@ if (totalEmpresas === 0) {
   app.patch('/api/admin/companies/:id', requireSuperAdmin, async (req, res) => {
     const id = normalizeCompanyId(req.params.id);
     const nome = String(req.body?.nome || req.body?.name || '').trim();
-    const login = String(req.body?.login || '').trim().toLowerCase();
+    const login = digitsOnly(req.body?.login);
     const password = String(req.body?.password || '').trim();
     const recoveryEmail = Object.prototype.hasOwnProperty.call(req.body || {}, 'recoveryEmail') ? String(req.body?.recoveryEmail || '').trim().toLowerCase() : undefined;
     if (!nome) return res.status(400).json({ error: 'Informe um nome válido.' });
-    if (login && login.length < 3) return res.status(400).json({ error: 'O login deve ter pelo menos 3 caracteres.' });
+    if (login && !isValidCpf(login) && !isValidCnpj(login)) return res.status(400).json({ error: 'Informe um CPF ou CNPJ válido para o acesso principal.' });
     if (password && password.length < 6) return res.status(400).json({ error: 'A nova senha deve ter pelo menos 6 caracteres.' });
     if (recoveryEmail !== undefined && !isValidEmail(recoveryEmail)) return res.status(400).json({ error: 'Informe um e-mail de recuperação válido.' });
 
@@ -1837,7 +1837,8 @@ if (totalEmpresas === 0) {
 
   app.post('/api/auth/portal-login', async (req, res) => {
     try {
-      const login = String(req.body?.login || '').trim().toLowerCase();
+      const rawLogin = String(req.body?.login || '').trim();
+      const login = digitsOnly(rawLogin);
       const password = String(req.body?.password || '');
       if (!login || !password) return res.status(400).json({ error: 'Informe login e senha.' });
 
@@ -1848,11 +1849,12 @@ if (totalEmpresas === 0) {
         return res.status(429).json({ error: 'Muitas tentativas de login. Aguarde alguns minutos e tente novamente.' });
       }
 
-      if (superAdminCredentialsMatch(login, password)) {
+      if (superAdminCredentialsMatch(rawLogin, password)) {
         clearRateLimit(loginRateKey);
         const token = createAuthSession({ role: 'superadmin' });
         return res.json({ success: true, token, role: 'superadmin', redirect: '/super-admin' });
       }
+      if (!isValidCpf(login) && !isValidCnpj(login)) return res.status(400).json({ error: 'Informe um CPF ou CNPJ válido.' });
 
       const requestedCompany = String(req.body?.companyId || '').trim();
       const result = await pool.query(
@@ -1944,7 +1946,8 @@ if (totalEmpresas === 0) {
         });
       }
 
-      const normalizedLogin = String(login || '').trim().toLowerCase();
+      const normalizedLogin = digitsOnly(login);
+      if (!isValidCpf(normalizedLogin) && !isValidCnpj(normalizedLogin)) return res.status(400).json({ error: 'Informe um CPF ou CNPJ válido.' });
       const result = await pool.query(
         `SELECT id, nome, login, senha_hash, perfil, ativo
          FROM avaliacao_usuarios
@@ -1969,7 +1972,7 @@ if (totalEmpresas === 0) {
 
   app.post('/api/auth/forgot-password', async (req, res) => {
     try {
-      const login = String(req.body?.login || '').trim().toLowerCase();
+      const login = digitsOnly(req.body?.login);
       if (!login) return res.status(400).json({ error: 'Informe o login de acesso.' });
       const resetRateKey = rateLimitKey(req, 'password-reset', login);
       const resetLimit = consumeRateLimit(resetRateKey, 3, 15 * 60 * 1000);
@@ -2095,7 +2098,7 @@ if (totalEmpresas === 0) {
       const password = String(req.body?.password || '').trim();
       const accessLevel = normalizeAccessLevel(req.body?.accessLevel || req.body?.perfil || 'manager');
       if (!nome) return res.status(400).json({ error: 'Informe o nome do usuário.' });
-      if (login.length < 3) return res.status(400).json({ error: 'O login deve ter pelo menos 3 caracteres.' });
+      if (!isValidCpf(login)) return res.status(400).json({ error: 'Os usuários da equipe devem usar um CPF válido como login.' });
       if (password.length < 6) return res.status(400).json({ error: 'A senha deve ter pelo menos 6 caracteres.' });
       if (!isValidEmail(email)) return res.status(400).json({ error: 'Informe um e-mail válido.' });
       if (accessLevel === 'owner') return res.status(400).json({ error: 'O acesso de proprietário é o acesso principal da empresa e não pode ser duplicado.' });
@@ -2129,7 +2132,7 @@ if (totalEmpresas === 0) {
         ? String(req.body?.name || req.body?.nome || '').trim()
         : String(current.nome);
       const login = Object.prototype.hasOwnProperty.call(req.body || {}, 'login')
-        ? String(req.body?.login || '').trim().toLowerCase()
+        ? digitsOnly(req.body?.login)
         : String(current.login);
       const email = Object.prototype.hasOwnProperty.call(req.body || {}, 'email')
         ? String(req.body?.email || '').trim().toLowerCase()
@@ -2140,7 +2143,9 @@ if (totalEmpresas === 0) {
       const active = isOwner ? true : (req.body?.active === undefined && req.body?.ativo === undefined ? Boolean(current.ativo) : Boolean(req.body?.active ?? req.body?.ativo));
 
       if (!nome) return res.status(400).json({ error: 'Informe o nome do usuário.' });
-      if (login.length < 3) return res.status(400).json({ error: 'O login deve ter pelo menos 3 caracteres.' });
+      if (isOwner ? (!isValidCpf(login) && !isValidCnpj(login)) : !isValidCpf(login)) {
+        return res.status(400).json({ error: isOwner ? 'O proprietário deve usar CPF ou CNPJ válido como login.' : 'Os usuários da equipe devem usar um CPF válido como login.' });
+      }
       if (!isValidEmail(email)) return res.status(400).json({ error: 'Informe um e-mail válido.' });
       if (password && password.length < 6) return res.status(400).json({ error: 'A nova senha deve ter pelo menos 6 caracteres.' });
       const duplicate = await pool.query('SELECT id FROM avaliacao_usuarios WHERE empresa_id=$1 AND LOWER(login)=LOWER($2) AND id<>$3 LIMIT 1', [companyId, login, id]);
