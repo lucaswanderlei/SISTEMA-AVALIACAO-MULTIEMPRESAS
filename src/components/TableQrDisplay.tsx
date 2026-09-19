@@ -820,8 +820,8 @@ const AcrylicStandCard: React.FC<AcrylicStandCardProps> = ({
       {/* Brand Header: logo quadrada, preservando a proporção original. */}
       <div className="mb-3">
         {settings.logoUrl ? (
-          <div className="w-24 h-24 mx-auto rounded-2xl bg-white overflow-hidden shadow-md border border-stone-200 p-1">
-            <img src={settings.logoUrl} alt={settings.name} className="w-full h-full object-contain" />
+          <div className="w-24 h-24 mx-auto rounded-2xl overflow-hidden shadow-md">
+            <img src={settings.logoUrl} alt={settings.name} className="w-full h-full object-cover" />
           </div>
         ) : (
           <div className="flex items-center justify-center gap-2.5">
