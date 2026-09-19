@@ -6,10 +6,24 @@ import { getCompanyId, tenantKey } from '../lib/tenant';
 import type { Review } from '../types';
 
 const voucherFromScan = (value: string) => {
+  const raw = String(value || '').trim();
+  // Os vouchers do sistema usam um QR em JSON com code, mesa e datas.
+  // Também aceitamos QR antigos com URL e o código puro.
   try {
-    const url = new URL(value);
-    return url.searchParams.get('voucher') || url.searchParams.get('codigo') || value;
-  } catch { return value; }
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      const code = parsed.code || parsed.rewardCode || parsed.voucherCode || parsed.voucher;
+      if (typeof code === 'string' && code.trim()) return code.trim();
+    }
+  } catch {}
+  try {
+    const url = new URL(raw);
+    const encoded = url.searchParams.get('payload') || url.searchParams.get('data');
+    if (encoded) return voucherFromScan(decodeURIComponent(encoded));
+    return url.searchParams.get('voucher') || url.searchParams.get('codigo') || url.searchParams.get('code') || raw;
+  } catch {}
+  const embeddedCode = raw.match(/BRINDE-[A-Z0-9-]+/i);
+  return embeddedCode?.[0] || raw;
 };
 
 export function VoucherValidationPortal() {
