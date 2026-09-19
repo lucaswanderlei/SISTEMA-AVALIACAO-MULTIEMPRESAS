@@ -715,11 +715,6 @@ export default function App() {
                 </div>
               )}
 
-              <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-bold">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-                <span>QR Sincronizado ({reviews.length})</span>
-              </div>
-
               <nav className="flex items-center bg-stone-100 p-1 rounded-2xl border border-stone-200/80">
                 <button
                   id="nav-btn-customer"
@@ -733,21 +728,6 @@ export default function App() {
                 >
                   <Smartphone className="w-4 h-4" />
                   <span>Visão do Cliente</span>
-                </button>
-
-                <button
-                  id="nav-btn-qr"
-                  type="button"
-                  onClick={() => setActiveView('qr_display')}
-                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                    activeView === 'qr_display'
-                      ? 'bg-white text-rose-700 shadow-sm'
-                      : 'text-stone-600 hover:text-stone-900'
-                  }`}
-                >
-                  <QrCode className="w-4 h-4" />
-                  <span className="hidden sm:inline">Placas & Totens QR</span>
-                  <span className="sm:hidden">Placas QR</span>
                 </button>
 
                 <button
@@ -865,6 +845,7 @@ export default function App() {
             onClearAllReviews={managerAccessLevel === 'viewer' ? undefined : handleClearAllReviews}
             onUpdateReviewsList={managerAccessLevel === 'viewer' ? undefined : ((updated) => setReviews(updated))}
             onSaveDatabase={managerAccessLevel === 'viewer' ? undefined : handleForceSaveDatabase}
+            onOpenQrDisplay={() => setActiveView('qr_display')}
             accessLevel={managerAccessLevel}
           />
         )}

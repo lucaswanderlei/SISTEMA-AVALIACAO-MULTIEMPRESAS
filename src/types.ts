@@ -99,6 +99,10 @@ export interface RestaurantSettings {
   ambianceRatingIcon?: RatingIconType;
   productsRatingIcon?: RatingIconType;
   waitTimeRatingIcon?: RatingIconType;
+  servicePillarName?: string;
+  ambiancePillarName?: string;
+  productsPillarName?: string;
+  waitTimePillarName?: string;
   evaluationTitle?: string;
   evaluationDescription?: string;
   quickTagsOptions?: string[]; // Destaques rápidos personalizáveis por empresa
