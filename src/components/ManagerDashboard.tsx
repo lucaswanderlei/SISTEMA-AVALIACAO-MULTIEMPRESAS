@@ -38,7 +38,6 @@ import {
   KeyRound,
   Eye,
   EyeOff,
-  Info,
   FileText,
   Lightbulb,
   Printer,
@@ -721,14 +720,7 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
   );
   const [newRewardWeight, setNewRewardWeight] = useState<number>(45);
 
-  // WhatsApp Testing & Persistence State
-  const [testPhone, setTestPhone] = useState('');
-  const [isTestingWhatsApp, setIsTestingWhatsApp] = useState(false);
-  const [isTestingMetaTemplate, setIsTestingMetaTemplate] = useState(false);
-  const [testWhatsAppResult, setTestWhatsAppResult] = useState<{
-    success: boolean;
-    message: string;
-  } | null>(null);
+  // WhatsApp API persistence state
   const [isSavingWhatsApp, setIsSavingWhatsApp] = useState(false);
   const [whatsappSavedSuccess, setWhatsappSavedSuccess] = useState(false);
 
@@ -746,110 +738,6 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
       // ignore
     } finally {
       setIsSavingWhatsApp(false);
-    }
-  };
-
-  const handleTestWhatsApp = async () => {
-    if (!testPhone || testPhone.replace(/\D/g, '').length < 10) {
-      setTestWhatsAppResult({
-        success: false,
-        message: 'Por favor, insira um número válido com DDD (ex: 11999999999).',
-      });
-      return;
-    }
-    if (!settings.whatsappApiUrl || settings.whatsappApiUrl.trim().length < 5) {
-      setTestWhatsAppResult({
-        success: false,
-        message: 'Por favor, preencha a URL do Gateway de WhatsApp antes de testar.',
-      });
-      return;
-    }
-
-    setIsTestingWhatsApp(true);
-    setTestWhatsAppResult(null);
-
-    try {
-      const res = await tenantFetch('/api/test-whatsapp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          phone: testPhone,
-          apiUrl: settings.whatsappApiUrl,
-          apiToken: settings.whatsappApiToken,
-          message: renderVoucherPreview(settings.voucherMessageTemplate || DEFAULT_VOUCHER_TEMPLATE, settings),
-        }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setTestWhatsAppResult({
-          success: true,
-          message: data.message || 'Mensagem oficial enviada com sucesso para o seu WhatsApp!',
-        });
-      } else {
-        setTestWhatsAppResult({
-          success: false,
-          message: data.error || 'Erro ao enviar mensagem pelo Gateway.',
-        });
-      }
-    } catch (err: any) {
-      setTestWhatsAppResult({
-        success: false,
-        message: err?.message || 'Falha na conexão com o servidor local.',
-      });
-    } finally {
-      setIsTestingWhatsApp(false);
-    }
-  };
-
-  const handleTestMetaTemplate = async () => {
-    if (!testPhone || testPhone.replace(/\D/g, '').length < 10) {
-      setTestWhatsAppResult({
-        success: false,
-        message: 'Por favor, insira um número válido com DDD (ex: 82993259566).',
-      });
-      return;
-    }
-    if (!settings.whatsappApiUrl || settings.whatsappApiUrl.trim().length < 5) {
-      setTestWhatsAppResult({
-        success: false,
-        message: 'Por favor, preencha a URL do Gateway de WhatsApp antes de testar.',
-      });
-      return;
-    }
-
-    setIsTestingMetaTemplate(true);
-    setTestWhatsAppResult(null);
-
-    try {
-      const res = await tenantFetch('/api/test-whatsapp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          phone: testPhone,
-          apiUrl: settings.whatsappApiUrl,
-          apiToken: settings.whatsappApiToken,
-          template: 'avaliacao_brinde',
-        }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setTestWhatsAppResult({
-          success: true,
-          message: 'Template de teste da Meta (avaliacao_brinde) enviado com sucesso! Verifique seu WhatsApp.',
-        });
-      } else {
-        setTestWhatsAppResult({
-          success: false,
-          message: data.error || 'Erro ao enviar template pela Meta Cloud API.',
-        });
-      }
-    } catch (err: any) {
-      setTestWhatsAppResult({
-        success: false,
-        message: err?.message || 'Falha na conexão com o servidor local.',
-      });
-    } finally {
-      setIsTestingMetaTemplate(false);
     }
   };
 
@@ -3479,113 +3367,6 @@ return (
                   </div>
                 </div>
 
-                {/* Meta Cloud API Info */}
-                <div className="p-4 bg-blue-50/90 border border-blue-200 rounded-xl text-xs space-y-3 text-blue-950">
-                  <div className="flex items-center gap-1.5 font-bold text-blue-900 text-sm">
-                    <Info className="w-4 h-4 text-blue-600 shrink-0" />
-                    <span>Meta WhatsApp Cloud API Oficial</span>
-                  </div>
-                  <div className="p-3 bg-amber-50/90 border border-amber-200 rounded-lg text-[11px] space-y-1.5 text-amber-950 leading-relaxed">
-                    <p className="font-bold text-amber-900">
-                      Como funciona o novo fluxo de envio
-                    </p>
-                    <p>O sistema envia o template <strong>avaliacao_brinde</strong> assim que o cliente termina a avaliação. O cliente responde <strong>SIM</strong> no WhatsApp, o que abre a janela de 24h da Meta. O sistema então envia automaticamente os detalhes do brinde conquistado.</p>
-                    <ul className="list-disc list-inside space-y-1 pl-1 text-amber-900/90">
-                      <li><strong>Cliente novo:</strong> Recebe o template, responde SIM e ganha o brinde por mensagem normal.</li>
-                      <li><strong>Cliente que já conversou:</strong> Recebe o template e o brinde após responder SIM.</li>
-                      <li><strong>Proteção contra duplicidade:</strong> Webhooks repetidos são ignorados automaticamente.</li>
-                    </ul>
-                    <p className="pt-1.5 text-[10px] text-blue-900 bg-blue-50/80 border border-blue-200 rounded-lg p-2">
-                      <strong>Configuração necessária na Meta:</strong> Configure o webhook em Gerenciador da Meta &gt; WhatsApp &gt; Configuração do Webhook. URL: <code>https://seu-dominio/api/whatsapp-webhook</code>. Token de verificação: <code>srcoxita_webhook_2026</code>. Inscreva-se no campo <strong>messages</strong>.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Interactive Test Tool */}
-                <div className="pt-3 border-t border-stone-200 space-y-2.5">
-                  <label className="block text-xs font-bold text-stone-900 flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    <span>Enviar Mensagem Oficial para Meu WhatsApp</span>
-                  </label>
-                  <p className="text-[11px] text-stone-500">
-                    Digite seu número abaixo e clique para testar o envio.
-                  </p>
-
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <input
-                      type="tel"
-                      value={testPhone}
-                      onChange={(e) => setTestPhone(e.target.value)}
-                      placeholder="DDD + Telefone (ex: 82993259566)"
-                      className="flex-1 text-xs p-2.5 rounded-xl border border-stone-200 bg-white focus:border-rose-500 outline-none font-bold text-stone-900"
-                    />
-                    <div className="flex flex-wrap sm:flex-nowrap gap-2">
-                      <button
-                        type="button"
-                        onClick={handleTestWhatsApp}
-                        disabled={isTestingWhatsApp || isTestingMetaTemplate}
-                        className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition flex items-center justify-center gap-2 cursor-pointer shadow-xs active:scale-95"
-                        title="Envia a mensagem oficial completa do voucher"
-                      >
-                        {isTestingWhatsApp ? (
-                          <>
-                            <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                            <span>Enviando...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Phone className="w-3.5 h-3.5 fill-white" />
-                            <span>Enviar Texto do Voucher</span>
-                          </>
-                        )}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={handleTestMetaTemplate}
-                        disabled={isTestingWhatsApp || isTestingMetaTemplate}
-                        className="px-3.5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
-                        title="Testa envio do template 'avaliacao_brinde' aprovado pela Meta"
-                      >
-                        {isTestingMetaTemplate ? (
-                          <>
-                            <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                            <span>Disparando...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Sparkles className="w-3.5 h-3.5" />
-                            <span>Testar Template Meta (avaliacao_brinde)</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  {testWhatsAppResult && (
-                    <div
-                      className={`p-3 rounded-xl border text-xs leading-relaxed ${
-                        testWhatsAppResult.success
-                          ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
-                          : 'bg-rose-50 border-rose-300 text-rose-900'
-                      }`}
-                    >
-                      <div className="flex items-start gap-2">
-                        {testWhatsAppResult.success ? (
-                          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                        ) : (
-                          <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                        )}
-                        <div>
-                          <strong className="block font-bold">
-                            {testWhatsAppResult.success ? 'Envio Concluído com Sucesso!' : 'Falha no Envio'}
-                          </strong>
-                          <span>{testWhatsAppResult.message}</span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
               </div>
           </div>
 
