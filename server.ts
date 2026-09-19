@@ -1701,17 +1701,58 @@ if (totalEmpresas === 0) {
       });
     }
 
-    const exists = await pool.query(
-      'SELECT empresa_id FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1',
-      [id]
-    );
-    if (!exists.rows[0]) return res.status(404).json({ error: 'Empresa não encontrada.' });
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const exists = await client.query(
+        'SELECT empresa_id FROM avaliacao_empresas WHERE empresa_id=$1 FOR UPDATE',
+        [id]
+      );
+      if (!exists.rows[0]) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Empresa não encontrada.' });
+      }
 
-    if ((await pool.query('SELECT id FROM avaliacao_billing_orders WHERE company_id=$1 LIMIT 1', [id])).rows.length) return res.status(409).json({error:'Esta empresa possui histórico financeiro. Suspenda o acesso em vez de excluir; cancele a renovação no Mercado Pago antes.'});
-    await pool.query('DELETE FROM avaliacao_empresas WHERE empresa_id=$1', [id]);
-    tenantDbs.delete(id);
+      // A assinatura recorrente continua existindo no Mercado Pago. Ela precisa
+      // ser cancelada antes de apagar a empresa local para não gerar cobranças
+      // futuras sem uma empresa para conciliar.
+      const recurring = await client.query(
+        `SELECT id FROM avaliacao_billing_orders
+         WHERE company_id=$1
+           AND method='card'
+           AND remote_id IS NOT NULL
+           AND status IN ('pending','in_process','authorized','paused')
+         LIMIT 1`,
+        [id]
+      );
+      if (recurring.rows[0]) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({
+          error: 'Esta empresa possui uma assinatura recorrente ativa ou pendente. Cancele-a no Mercado Pago antes de excluir a empresa.'
+        });
+      }
 
-    res.json({ success: true, empresaId: id });
+      // Cobranças avulsas, Pix expirados e testes não devem impedir a remoção.
+      // Os pagamentos dependem dos pedidos, por isso são apagados primeiro.
+      await client.query(
+        `DELETE FROM avaliacao_billing_payments p
+         USING avaliacao_billing_orders o
+         WHERE p.order_id=o.id AND o.company_id=$1`,
+        [id]
+      );
+      await client.query('DELETE FROM avaliacao_billing_orders WHERE company_id=$1', [id]);
+      await client.query('DELETE FROM avaliacao_empresas WHERE empresa_id=$1', [id]);
+      await client.query('COMMIT');
+
+      tenantDbs.delete(id);
+      invalidateCompanySessions(id);
+      res.json({ success: true, empresaId: id });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
   });
 
   registerBillingRoutes(app, pool, requireCompanyOwner, requireSuperAdmin, currentCompanyId, getPlatformPlanPrices);
