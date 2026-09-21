@@ -139,22 +139,16 @@ export default function App() {
   // Track permanently deleted review IDs to prevent resurrection from server/firestore race conditions
   const deletedReviewIdsRef = useRef<Set<string>>(loadDeletedReviewIds());
 
-  // Determine if manager is authenticated via sessionStorage
+  // Keep manager authentication in this browser until the user explicitly logs out.
   const [isManagerLoggedIn, setIsManagerLoggedIn] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       // If customer is opening via QR link (?cliente=1 or ?origem=qrcode or has mesa)
       if (!directManagerRoute && (params.get('cliente') || params.get('origem') === 'qrcode' || params.get('mesa'))) {
-        try {
-          sessionStorage.removeItem(tenantKey('restaurant_manager_auth'));
-          sessionStorage.removeItem(tenantKey('restaurant_manager_token'));
-          sessionStorage.removeItem(tenantKey('restaurant_manager_role'));
-          sessionStorage.removeItem(tenantKey('restaurant_manager_access'));
-        } catch {}
         return false;
       }
       try {
-        return sessionStorage.getItem(tenantKey('restaurant_manager_auth')) === 'true';
+        return localStorage.getItem(tenantKey('restaurant_manager_auth')) === 'true';
       } catch {}
     }
     return false;
@@ -162,7 +156,7 @@ export default function App() {
   const [managerRole, setManagerRole] = useState<string>(() => {
     if (typeof window === 'undefined') return '';
     try {
-      return sessionStorage.getItem(tenantKey('restaurant_manager_role')) || 'manager';
+      return localStorage.getItem(tenantKey('restaurant_manager_role')) || 'manager';
     } catch {
       return 'manager';
     }
@@ -170,7 +164,7 @@ export default function App() {
   const [managerAccessLevel, setManagerAccessLevel] = useState<'owner' | 'manager' | 'viewer' | 'redeemer' | 'superadmin'>(() => {
     if (typeof window === 'undefined') return 'owner';
     try {
-      return (sessionStorage.getItem(tenantKey('restaurant_manager_access')) as 'owner' | 'manager' | 'viewer' | 'redeemer' | 'superadmin') || 'owner';
+      return (localStorage.getItem(tenantKey('restaurant_manager_access')) as 'owner' | 'manager' | 'viewer' | 'redeemer' | 'superadmin') || 'owner';
     } catch {
       return 'owner';
     }
@@ -230,7 +224,7 @@ export default function App() {
       if (isManagerUrl && !isClientUrl) {
         setActiveView('manager');
         setPendingView('manager');
-        const authenticated = sessionStorage.getItem(tenantKey('restaurant_manager_auth')) === 'true';
+        const authenticated = localStorage.getItem(tenantKey('restaurant_manager_auth')) === 'true';
         setIsManagerLoggedIn(authenticated);
         if (!authenticated && !initialResetToken) setShowPinModal(true);
       }
@@ -239,12 +233,6 @@ export default function App() {
         // Enforce customer mode when scanning QR code
         setIsManagerLoggedIn(false);
         setActiveView('customer');
-        try {
-          sessionStorage.removeItem(tenantKey('restaurant_manager_auth'));
-          sessionStorage.removeItem(tenantKey('restaurant_manager_token'));
-          sessionStorage.removeItem(tenantKey('restaurant_manager_role'));
-          sessionStorage.removeItem(tenantKey('restaurant_manager_access'));
-        } catch {}
         setManagerRole('');
         setManagerAccessLevel('owner');
       }
@@ -484,9 +472,9 @@ export default function App() {
         return;
       }
       try {
-        sessionStorage.setItem(tenantKey('restaurant_manager_auth'), 'true');
-        sessionStorage.setItem(tenantKey('restaurant_manager_role'), result.role || 'manager');
-        sessionStorage.setItem(tenantKey('restaurant_manager_access'), result.role === 'superadmin' ? 'superadmin' : (result.accessLevel || 'owner'));
+        localStorage.setItem(tenantKey('restaurant_manager_auth'), 'true');
+        localStorage.setItem(tenantKey('restaurant_manager_role'), result.role || 'manager');
+        localStorage.setItem(tenantKey('restaurant_manager_access'), result.role === 'superadmin' ? 'superadmin' : (result.accessLevel || 'owner'));
       } catch {}
       setManagerRole(result.role || 'manager');
       setManagerAccessLevel(result.role === 'superadmin' ? 'superadmin' : (result.accessLevel || 'owner'));
@@ -524,10 +512,10 @@ export default function App() {
 
   const handleLogoutManager = () => {
     try {
-      sessionStorage.removeItem(tenantKey('restaurant_manager_auth'));
-      sessionStorage.removeItem(tenantKey('restaurant_manager_token'));
-      sessionStorage.removeItem(tenantKey('restaurant_manager_role'));
-      sessionStorage.removeItem(tenantKey('restaurant_manager_access'));
+      localStorage.removeItem(tenantKey('restaurant_manager_auth'));
+      localStorage.removeItem(tenantKey('restaurant_manager_token'));
+      localStorage.removeItem(tenantKey('restaurant_manager_role'));
+      localStorage.removeItem(tenantKey('restaurant_manager_access'));
     } catch {}
     setIsManagerLoggedIn(false);
     setManagerRole('');
