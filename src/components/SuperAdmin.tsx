@@ -1,6 +1,7 @@
 import { BillingAdmin } from './BillingAdmin';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Activity,
   AlertTriangle,
   BarChart3,
   Building2,
@@ -20,9 +21,11 @@ import {
   RefreshCw,
   Save,
   ShieldCheck,
+  Sparkles,
   ToggleLeft,
   ToggleRight,
   Trash2,
+  Users,
   X,
 } from 'lucide-react';
 
@@ -139,7 +142,7 @@ const formatDate = (value?: string | null) => {
 };
 
 export function SuperAdmin() {
-  const [token, setToken] = useState(() => localStorage.getItem('super_admin_token') || '');
+  const [token, setToken] = useState(() => sessionStorage.getItem('super_admin_token') || '');
   const [masterLogin, setMasterLogin] = useState('');
   const [masterPassword, setMasterPassword] = useState('');
   const [showMasterPassword, setShowMasterPassword] = useState(false);
@@ -172,6 +175,7 @@ export function SuperAdmin() {
   const [renewingId, setRenewingId] = useState<string | null>(null);
   const [changingStatusId, setChangingStatusId] = useState<string | null>(null);
   const [backupCompanyId, setBackupCompanyId] = useState<string | null>(null);
+  const [demoCompanyId, setDemoCompanyId] = useState<string | null>(null);
   const [backupAllBusy, setBackupAllBusy] = useState(false);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
@@ -206,6 +210,41 @@ export function SuperAdmin() {
       setError(e.message || 'Erro ao baixar backup da empresa.');
     } finally {
       setBackupCompanyId(null);
+    }
+  };
+
+  const seedDemo = async (company: Company, reset: boolean) => {
+    if (reset && !window.confirm(`Isso vai apagar os dados fictícios já gerados para "${company.nome}" antes de criar novos. Avaliações reais (se houver) não são afetadas. Continuar?`)) return;
+    setDemoCompanyId(company.empresa_id);
+    setError('');
+    try {
+      const res = await request(`/api/admin/companies/${encodeURIComponent(company.empresa_id)}/seed-demo`, {
+        method: 'POST',
+        body: JSON.stringify({ days: 45, count: 120, reset }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Não foi possível gerar os dados de demonstração.');
+      window.alert(`${data.added} avaliações fictícias geradas para "${company.nome}" (total: ${data.total}).`);
+    } catch (e: any) {
+      setError(e.message || 'Erro ao gerar dados de demonstração.');
+    } finally {
+      setDemoCompanyId(null);
+    }
+  };
+
+  const clearDemo = async (company: Company) => {
+    if (!window.confirm(`Remover todos os dados fictícios de "${company.nome}"? Avaliações reais não são afetadas.`)) return;
+    setDemoCompanyId(company.empresa_id);
+    setError('');
+    try {
+      const res = await request(`/api/admin/companies/${encodeURIComponent(company.empresa_id)}/demo-data`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Não foi possível remover os dados de demonstração.');
+      window.alert(`${data.removed} avaliações fictícias removidas de "${company.nome}" (restam: ${data.total}).`);
+    } catch (e: any) {
+      setError(e.message || 'Erro ao remover dados de demonstração.');
+    } finally {
+      setDemoCompanyId(null);
     }
   };
 
@@ -255,7 +294,7 @@ export function SuperAdmin() {
         request('/api/admin/dashboard', { cache: 'no-store' }),
       ]);
       if (companiesRes.status === 401 || dashboardRes.status === 401) {
-        localStorage.removeItem('super_admin_token');
+        sessionStorage.removeItem('super_admin_token');
         setToken('');
         throw new Error('Sessão mestre expirada. Entre novamente.');
       }
@@ -324,7 +363,7 @@ export function SuperAdmin() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.token) throw new Error(data.error || 'Login ou senha mestre inválidos.');
-      localStorage.setItem('super_admin_token', data.token);
+      sessionStorage.setItem('super_admin_token', data.token);
       setToken(data.token);
       setMasterPassword('');
     } catch (e: any) {
@@ -433,13 +472,8 @@ export function SuperAdmin() {
   const saveCompany = async (company: Company) => {
     const cleanName = editingName.trim();
     const cleanLogin = editingLogin.replace(/\D/g, '');
-    const loginWasChanged = editingLogin !== (company.login || company.empresa_id);
-    if (!cleanName) {
-      setError('Informe um nome válido.');
-      return;
-    }
-    if (loginWasChanged && cleanLogin.length !== 11 && cleanLogin.length !== 14) {
-      setError('O novo login deve ser um CPF ou CNPJ válido.');
+    if (!cleanName || (cleanLogin.length !== 11 && cleanLogin.length !== 14)) {
+      setError('Informe nome e CPF/CNPJ válidos.');
       return;
     }
     setError('');
@@ -448,9 +482,7 @@ export function SuperAdmin() {
         method: 'PATCH',
         body: JSON.stringify({
           nome: cleanName,
-          // Registros antigos/de demonstração podem ter login textual. Ao
-          // renomear somente a empresa, o servidor deve preservar esse login.
-          login: loginWasChanged ? cleanLogin : undefined,
+          login: cleanLogin,
           password: editingPassword || undefined,
           recoveryEmail: editingRecoveryEmail,
           plan: editingPlan,
@@ -539,7 +571,7 @@ export function SuperAdmin() {
           </div>
           <button
             onClick={() => {
-              localStorage.removeItem('super_admin_token');
+              sessionStorage.removeItem('super_admin_token');
               setToken('');
               setCompanies([]);
               setDashboard(null);
@@ -554,7 +586,7 @@ export function SuperAdmin() {
       <main className="max-w-7xl mx-auto p-4 sm:p-6 space-y-6">
         {error && <div className="bg-rose-50 text-rose-700 border border-rose-200 rounded-xl p-3 text-sm font-semibold">{error}</div>}
 
-        <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <section className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
           <div className="bg-white rounded-2xl border border-stone-200 p-4">
             <div className="text-xs font-bold text-stone-500 flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5" />Empresas</div>
             <div className="text-2xl font-black text-stone-900 mt-1">{dashboard?.totals.companies ?? companies.length}</div>
@@ -562,6 +594,15 @@ export function SuperAdmin() {
           <div className="bg-white rounded-2xl border border-stone-200 p-4">
             <div className="text-xs font-bold text-emerald-600 flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" />Ativas</div>
             <div className="text-2xl font-black text-stone-900 mt-1">{dashboard?.totals.active ?? summary.active}</div>
+          </div>
+          <div className="bg-white rounded-2xl border border-stone-200 p-4">
+            <div className="text-xs font-bold text-sky-600 flex items-center gap-1.5"><Users className="w-3.5 h-3.5" />Clientes únicos</div>
+            <div className="text-2xl font-black text-stone-900 mt-1">{dashboard?.totals.uniqueCustomers ?? 0}</div>
+          </div>
+          <div className="bg-white rounded-2xl border border-stone-200 p-4">
+            <div className="text-xs font-bold text-violet-600 flex items-center gap-1.5"><Activity className="w-3.5 h-3.5" />Avaliações</div>
+            <div className="text-2xl font-black text-stone-900 mt-1">{dashboard?.totals.totalReviews ?? summary.reviews}</div>
+            <div className="text-[10px] text-stone-400 mt-0.5">{dashboard?.totals.reviews30d ?? 0} nos últimos 30 dias</div>
           </div>
           <div className="bg-white rounded-2xl border border-stone-200 p-4">
             <div className="text-xs font-bold text-amber-600 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" />Vencem em 7 dias</div>
@@ -789,6 +830,22 @@ export function SuperAdmin() {
                           title="Baixar backup desta empresa"
                         >
                           <Download className="w-3.5 h-3.5" />{backupCompanyId === c.empresa_id ? 'Gerando...' : 'Backup'}
+                        </button>
+                        <button
+                          disabled={demoCompanyId === c.empresa_id}
+                          onClick={() => void seedDemo(c, false)}
+                          className="text-xs font-bold px-3 py-2 rounded-xl bg-amber-50 text-amber-700 flex items-center gap-1.5 disabled:opacity-50"
+                          title="Adicionar avaliações fictícias para mostrar o painel funcionando (não afeta avaliações reais). Cadastre garçons e um brinde antes."
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />{demoCompanyId === c.empresa_id ? 'Gerando...' : 'Gerar demo'}
+                        </button>
+                        <button
+                          disabled={demoCompanyId === c.empresa_id}
+                          onClick={() => void clearDemo(c)}
+                          className="text-xs font-bold px-3 py-2 rounded-xl bg-stone-100 text-stone-600 flex items-center gap-1.5 disabled:opacity-50"
+                          title="Remover as avaliações fictícias desta empresa (avaliações reais não são afetadas)"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />Limpar demo
                         </button>
                         <button
                           disabled={renewingId === c.empresa_id}

@@ -53,6 +53,7 @@ import {
 import { RestaurantSettings, RewardOption, Review, Waiter } from '../types';
 import { CustomerDatabaseView } from './CustomerDatabaseView';
 import { UserAccessManager } from './UserAccessManager';
+import { OnboardingChecklist } from './OnboardingChecklist';
 import { apiUpdateAccessCredentials, tenantFetch } from '../lib/api';
 import type { WaiterCredential } from '../lib/api';
 import { getCompanyId, tenantKey, withCompanyParam } from '../lib/tenant';
@@ -1315,6 +1316,16 @@ return (
 
       {activeTab === 'metrics' && (
         <div className="space-y-6">
+          {!isViewer && (
+            <OnboardingChecklist
+              settings={settings}
+              waiters={waiters}
+              rewards={rewards}
+              reviews={reviews}
+              onOpenQrDisplay={onOpenQrDisplay}
+              onGoToTab={(tab) => setActiveTab(tab)}
+            />
+          )}
           {/* Top Stat Highlights */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Nota Média Geral */}
