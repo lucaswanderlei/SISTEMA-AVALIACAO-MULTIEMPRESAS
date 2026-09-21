@@ -4,7 +4,7 @@ import { tenantFetch } from '../lib/api';
 
 type Report = {
   id:string; generatedAt:string; cached?:boolean; companyName:string;
-  period:{days:number;date?:string;start:string;end:string}; totals:{current:number;previous:number;average:number|null;previousAverage:number|null};
+  period:{days:number;range?:{start:string;end:string};start:string;end:string}; totals:{current:number;previous:number;average:number|null;previousAverage:number|null};
   sufficient:boolean; comparable:boolean; commentSample:{included:number;total:number};
   sections:Array<{key:string;title:string;paragraphs:string[];evidenceIds:string[];severity?:string}>;
   facts:Array<{id:string;text:string}>; staffLabels?:Array<{alias:string;name:string}>;
@@ -17,10 +17,11 @@ const range=(r:Report)=>{
 };
 const mean=(value:number|null)=>value==null?'—':value.toLocaleString('pt-BR',{maximumFractionDigits:2});
 export function PremiumAiReport({canGenerate}:{canGenerate:boolean}) {
-  const [mode,setMode]=useState<'days'|'day'>('days');
-  const [days,setDays]=useState(30),[selectedDate,setSelectedDate]=useState('');
+  const [mode,setMode]=useState<'days'|'range'>('days');
+  const [days,setDays]=useState(30),[rangeStart,setRangeStart]=useState(''),[rangeEnd,setRangeEnd]=useState('');
   const [status,setStatus]=useState<Status|null>(null);
   const yesterday=(()=>{const sp=new Date(new Date().toLocaleString('en-US',{timeZone:'America/Sao_Paulo'}));sp.setDate(sp.getDate()-1);return sp.toISOString().slice(0,10);})();
+  const rangeValid=mode!=='range'||(rangeStart&&rangeEnd&&rangeStart<=rangeEnd);
   const [reports,setReports]=useState<Report[]>([]),[report,setReport]=useState<Report|null>(null);
   const [busy,setBusy]=useState(false),[loading,setLoading]=useState(true),[error,setError]=useState(''),[notice,setNotice]=useState('');
   const alive=useRef(true),inflight=useRef(false);
@@ -42,7 +43,7 @@ export function PremiumAiReport({canGenerate}:{canGenerate:boolean}) {
   const generate=async(refresh=false)=>{
     if(inflight.current)return;inflight.current=true;setBusy(true);setError('');setNotice('');
     try{
-      const body=await request('/api/ai/reports',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(mode==='day'?{date:selectedDate,refresh}:{days,refresh})});
+      const body=await request('/api/ai/reports',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(mode==='range'?{start:rangeStart,end:rangeEnd,refresh}:{days,refresh})});
       if(!alive.current)return;
       setReport(body.report);setReports(old=>[body.report,...old.filter(r=>r.id!==body.report.id&&!(r.period.start===body.report.period.start&&r.period.end===body.report.period.end))].slice(0,20));
       setNotice(body.report.cached?'Relatório já disponível para esses dados. Nenhuma nova geração foi necessária.':'Análise concluída.');
@@ -72,17 +73,22 @@ export function PremiumAiReport({canGenerate}:{canGenerate:boolean}) {
     {!loading&&status&&!status.configured&&<div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-900">A análise de IA está incluída no seu Premium e aguarda ativação pelo administrador da plataforma. Relatórios já gerados continuam disponíveis abaixo.</div>}
     {status&&<div className="bg-white border border-stone-200 rounded-2xl p-5 flex flex-wrap items-end gap-3">
       <label className="text-xs font-bold text-stone-600">Período da análise
-        <select value={mode==='day'?'day':String(days)} disabled={busy} onChange={e=>{const v=e.target.value;if(v==='day'){setMode('day');}else{setMode('days');setDays(Number(v));}}} className="block mt-1 rounded-xl border border-stone-300 bg-white text-stone-900 px-3 py-2.5 text-sm">
+        <select value={mode==='range'?'range':String(days)} disabled={busy} onChange={e=>{const v=e.target.value;if(v==='range'){setMode('range');}else{setMode('days');setDays(Number(v));}}} className="block mt-1 rounded-xl border border-stone-300 bg-white text-stone-900 px-3 py-2.5 text-sm">
           <option value={7}>Últimos 7 dias completos</option><option value={30}>Últimos 30 dias completos</option><option value={90}>Últimos 90 dias completos</option>
-          <option value="day">Dia específico</option>
+          <option value="range">Escolher intervalo (de/até)</option>
         </select>
       </label>
-      {mode==='day'&&<label className="text-xs font-bold text-stone-600">Escolha o dia
-        <input type="date" value={selectedDate} max={yesterday} disabled={busy} onChange={e=>setSelectedDate(e.target.value)} className="block mt-1 rounded-xl border border-stone-300 bg-white text-stone-900 px-3 py-2.5 text-sm" />
-      </label>}
-      {canGenerate&&<button disabled={busy||!status.configured||(mode==='day'&&!selectedDate)} onClick={()=>void generate()} className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-rose-600 text-white font-bold text-sm disabled:opacity-50"><Sparkles className="w-4 h-4"/>{busy?'Analisando avaliações...':'Gerar análise'}</button>}
-      {canGenerate&&report&&<button disabled={busy||!status.configured||(mode==='day'&&!selectedDate)} onClick={()=>void generate(true)} className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-stone-300 text-stone-700 font-bold text-sm disabled:opacity-50"><RefreshCw className="w-4 h-4"/>Gerar novamente</button>}
-      <p className="w-full text-xs text-stone-500">Até ontem • Comparação com o dia ou período anterior de mesma duração. {canGenerate?`${status.attemptsToday}/${status.dailyLimit} tentativas utilizadas hoje.`:'Seu acesso permite consultar as análises já geradas.'}</p>
+      {mode==='range'&&<>
+        <label className="text-xs font-bold text-stone-600">De
+          <input type="date" value={rangeStart} max={rangeEnd||yesterday} disabled={busy} onChange={e=>setRangeStart(e.target.value)} className="block mt-1 rounded-xl border border-stone-300 bg-white text-stone-900 px-3 py-2.5 text-sm" />
+        </label>
+        <label className="text-xs font-bold text-stone-600">Até
+          <input type="date" value={rangeEnd} min={rangeStart||undefined} max={yesterday} disabled={busy} onChange={e=>setRangeEnd(e.target.value)} className="block mt-1 rounded-xl border border-stone-300 bg-white text-stone-900 px-3 py-2.5 text-sm" />
+        </label>
+      </>}
+      {canGenerate&&<button disabled={busy||!status.configured||!rangeValid} onClick={()=>void generate()} className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-rose-600 text-white font-bold text-sm disabled:opacity-50"><Sparkles className="w-4 h-4"/>{busy?'Analisando avaliações...':'Gerar análise'}</button>}
+      {canGenerate&&report&&<button disabled={busy||!status.configured||!rangeValid} onClick={()=>void generate(true)} className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-stone-300 text-stone-700 font-bold text-sm disabled:opacity-50"><RefreshCw className="w-4 h-4"/>Gerar novamente</button>}
+      <p className="w-full text-xs text-stone-500">Até ontem • Comparação com o período anterior de mesma duração. {canGenerate?`${status.attemptsToday}/${status.dailyLimit} tentativas utilizadas hoje.`:'Seu acesso permite consultar as análises já geradas.'}</p>
     </div>}
     {busy&&<p role="status" className="text-sm text-stone-500 flex gap-2 items-center"><Clock className="w-4 h-4"/>A análise pode levar até um minuto.</p>}
     {reports.length>0&&<label className="block text-xs font-bold text-stone-600">Análises salvas
