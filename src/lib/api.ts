@@ -6,7 +6,7 @@ export function tenantFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   const headers = new Headers(init.headers || {});
   headers.set('X-Company-Id', getCompanyId());
   try {
-    const token = sessionStorage.getItem(tenantKey('restaurant_manager_token'));
+    const token = localStorage.getItem(tenantKey('restaurant_manager_token'));
     if (token) headers.set('Authorization', `Bearer ${token}`);
   } catch {}
   return fetch(input, { ...init, headers });
@@ -22,7 +22,7 @@ export async function apiManagerLogin(login: string, password: string, billingOn
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { success: false, error: data.error || 'Login ou senha inválidos.' };
     if (data.token) {
-      try { sessionStorage.setItem(tenantKey('restaurant_manager_token'), data.token); } catch {}
+      try { localStorage.setItem(tenantKey('restaurant_manager_token'), data.token); } catch {}
     }
     return { success: true, token: data.token, role: data.role, accessLevel: data.accessLevel, userId: data.userId, userName: data.userName };
   } catch (err: any) {
