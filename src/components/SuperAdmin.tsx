@@ -433,8 +433,13 @@ export function SuperAdmin() {
   const saveCompany = async (company: Company) => {
     const cleanName = editingName.trim();
     const cleanLogin = editingLogin.replace(/\D/g, '');
-    if (!cleanName || (cleanLogin.length !== 11 && cleanLogin.length !== 14)) {
-      setError('Informe nome e CPF/CNPJ válidos.');
+    const loginWasChanged = editingLogin !== (company.login || company.empresa_id);
+    if (!cleanName) {
+      setError('Informe um nome válido.');
+      return;
+    }
+    if (loginWasChanged && cleanLogin.length !== 11 && cleanLogin.length !== 14) {
+      setError('O novo login deve ser um CPF ou CNPJ válido.');
       return;
     }
     setError('');
@@ -443,7 +448,9 @@ export function SuperAdmin() {
         method: 'PATCH',
         body: JSON.stringify({
           nome: cleanName,
-          login: cleanLogin,
+          // Registros antigos/de demonstração podem ter login textual. Ao
+          // renomear somente a empresa, o servidor deve preservar esse login.
+          login: loginWasChanged ? cleanLogin : undefined,
           password: editingPassword || undefined,
           recoveryEmail: editingRecoveryEmail,
           plan: editingPlan,
