@@ -28,6 +28,8 @@ import {
   Award,
   Edit2,
   ThumbsUp,
+  ChevronDown,
+  HelpCircle,
   X,
   Phone,
   Database,
@@ -683,10 +685,10 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
       setPinFeedback({ type: 'success', message: '✓ Login e senha atualizados. Por segurança, você será desconectado para entrar novamente.' });
       window.setTimeout(() => {
         try {
-          localStorage.removeItem(tenantKey('restaurant_manager_auth'));
-          localStorage.removeItem(tenantKey('restaurant_manager_token'));
-          localStorage.removeItem(tenantKey('restaurant_manager_role'));
-          localStorage.removeItem(tenantKey('restaurant_manager_access'));
+          sessionStorage.removeItem(tenantKey('restaurant_manager_auth'));
+          sessionStorage.removeItem(tenantKey('restaurant_manager_token'));
+          sessionStorage.removeItem(tenantKey('restaurant_manager_role'));
+          sessionStorage.removeItem(tenantKey('restaurant_manager_access'));
         } catch {}
         window.location.reload();
       }, 1200);
@@ -3018,6 +3020,20 @@ return (
             {isPremium ? <>
               <p className="text-[11px] text-stone-600">Após concluir a avaliação e receber o voucher, o cliente verá um botão opcional para avaliar também no Google.</p>
               <input type="url" value={settings.googleReviewUrl || ''} onChange={(e) => onUpdateSettings({ ...settings, googleReviewUrl: e.target.value })} placeholder="Cole aqui o link de avaliação do Google" className="w-full text-xs p-2.5 rounded-xl border border-amber-300 bg-white focus:border-amber-500 outline-none" />
+              <details className="group">
+                <summary className="flex items-center gap-1.5 text-[11px] font-bold text-amber-700 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+                  <HelpCircle className="w-3.5 h-3.5 shrink-0" />
+                  Como encontrar esse link
+                  <ChevronDown className="w-3.5 h-3.5 shrink-0 transition-transform group-open:rotate-180" />
+                </summary>
+                <div className="mt-2 pl-1 pr-1 pb-1 text-[11px] text-stone-600 space-y-1.5 leading-relaxed">
+                  <p><strong>1.</strong> No celular ou computador, pesquise o nome da sua empresa no Google (ou abra o Google Maps).</p>
+                  <p><strong>2.</strong> No card do seu negócio, toque em <strong>Avaliações</strong> e depois em <strong>Escrever uma avaliação</strong> (ou toque no ícone de compartilhar, se aparecer).</p>
+                  <p><strong>3.</strong> Vai abrir uma tela pedindo para avaliar — copie o link que aparece na barra de endereço do navegador (ou use o botão de compartilhar/copiar link).</p>
+                  <p><strong>4.</strong> Cole esse link no campo acima. Ele costuma começar com <span className="font-mono bg-white px-1 py-0.5 rounded border border-stone-200">g.page/r/</span> ou <span className="font-mono bg-white px-1 py-0.5 rounded border border-stone-200">search.google.com/local/writereview</span>.</p>
+                  <p className="text-stone-400">Dica: se sua empresa tem o Google Business Profile configurado, também dá para achar esse link em "Peça avaliações" dentro do próprio painel do Google Business Profile.</p>
+                </div>
+              </details>
             </> : <p className="text-[11px] text-stone-600">Disponível no Premium. Faça upgrade para adicionar o link da sua empresa no Google após o voucher.</p>}
           </div>
 
