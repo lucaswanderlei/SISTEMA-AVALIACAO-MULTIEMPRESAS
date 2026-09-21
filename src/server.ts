@@ -722,7 +722,7 @@ function describeAuditableMutation(req: express.Request, tenantId: string): Audi
 
   if (method === 'PUT' && pathName === '/api/admin/billing') return { action:'billing.discount.update', entity:'platform', summary:'Desconto anual atualizado.', details:{annualDiscountPercent:req.body?.annualDiscountPercent} };
   if (method === 'POST' && pathName.startsWith('/api/billing/orders')) return { action:'billing.order.action', entity:'billing', companyId:tenantId, companyName:currentName, summary:'Operação de assinatura solicitada.', details:{path:pathName,plan:req.body?.plan,cycle:req.body?.cycle,method:req.body?.method} };
-  if (method === 'POST' && pathName === '/api/ai/reports') return { action: 'ai.report.generate', entity: 'ai_report', companyId: tenantId, companyName: currentName, summary: 'Análise Premium de IA consultada ou gerada.', details: { days: req.body?.days, date: req.body?.date, refresh: req.body?.refresh === true } };
+  if (method === 'POST' && pathName === '/api/ai/reports') return { action: 'ai.report.generate', entity: 'ai_report', companyId: tenantId, companyName: currentName, summary: 'Análise Premium de IA consultada ou gerada.', details: { days: req.body?.days, start: req.body?.start, end: req.body?.end, refresh: req.body?.refresh === true } };
   if (method === 'PUT' && pathName === '/api/admin/dashboard/plan-prices') {
     return { action: 'platform.plan_prices.update', entity: 'platform', summary: 'Valores dos planos comerciais foram alterados.', details: { fields } };
   }
