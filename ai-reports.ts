@@ -52,9 +52,10 @@ export async function callGemini(dataset: any, apiKey: string, model: string): P
     throw new CommerceError(502,'Não foi possível gerar o relatório de IA agora. Verifique a configuração do serviço ou tente novamente mais tarde.','AI_PROVIDER_ERROR');
   }
 }
-export async function generatePremiumReport(pool: any, companyId: string, options: { days: number; refresh?: boolean }, config: { apiKey: string; model: string }, generate=callGemini, now=new Date()) {
+export async function generatePremiumReport(pool: any, companyId: string, options: { days?: number; date?: string; refresh?: boolean }, config: { apiKey: string; model: string }, generate=callGemini, now=new Date()) {
   const company = await readPremiumCompany(pool,companyId);
-  const prepared = buildAiDataset(company.dados,options.days,now);
+  const period: number | string = options.date ?? options.days!;
+  const prepared = buildAiDataset(company.dados,period,now);
   if(!prepared.dataset.totals.current) throw new CommerceError(422,'Ainda não há avaliações nos dias completos selecionados. Escolha outro período.','AI_NO_DATA');
   const hash=digest(`${digest(AI_REPORT_PROMPT)}:${config.model}:${prepared.fingerprint}`);
   if(!options.refresh) {
@@ -76,7 +77,7 @@ export async function generatePremiumReport(pool: any, companyId: string, option
     await client.query('BEGIN');
     const latest=(await client.query('SELECT plano, ativo, status_assinatura, vencimento_em, dados FROM avaliacao_empresas WHERE empresa_id=$1 FOR UPDATE',[companyId])).rows[0];
     assertPremiumCompany(latest);
-    if(buildAiDataset(latest.dados,options.days,now).fingerprint!==prepared.fingerprint) throw new CommerceError(409,'As avaliações mudaram durante a análise. Gere um novo relatório.','AI_DATA_CHANGED');
+    if(buildAiDataset(latest.dados,period,now).fingerprint!==prepared.fingerprint) throw new CommerceError(409,'As avaliações mudaram durante a análise. Gere um novo relatório.','AI_DATA_CHANGED');
     await client.query(`INSERT INTO avaliacao_ai_reports(id,empresa_id,source_hash,report) VALUES($1,$2,$3,$4::jsonb)
       ON CONFLICT(empresa_id,source_hash) DO UPDATE SET id=EXCLUDED.id,report=EXCLUDED.report,criado_em=NOW()`,[report.id,companyId,hash,JSON.stringify(report)]);
     await client.query(`DELETE FROM avaliacao_ai_reports WHERE empresa_id=$1 AND id NOT IN
@@ -99,8 +100,13 @@ export function registerAiRoutes(app:any,pool:any,auth:any,editor:any,companyId:
   });
   app.post('/api/ai/reports',auth,editor,async(req:any,res:any)=>{
     const days=req.body?.days;
-    if(!Number.isInteger(days))throw new CommerceError(400,'Período inválido.');
-    const report=await generatePremiumReport(pool,companyId(),{days,refresh:req.body?.refresh===true},configuration());
+    const date=req.body?.date;
+    if(date!==undefined){
+      if(typeof date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(date))throw new CommerceError(400,'Data inválida.');
+    } else if(!Number.isInteger(days)) {
+      throw new CommerceError(400,'Período inválido.');
+    }
+    const report=await generatePremiumReport(pool,companyId(),{days:date===undefined?days:undefined,date,refresh:req.body?.refresh===true},configuration());
     res.setHeader('Cache-Control','no-store');res.json({success:true,report});
   });
 }

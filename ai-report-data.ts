@@ -41,10 +41,21 @@ export function redactAiText(value: unknown, customerNames: string[] = []): stri
     .replace(/\b(?:rua|avenida|av\.|travessa|alameda|cep)\s+[^\n;,]{3,100}/gi, '[endereço]')
     .replace(/\b\d{5,}\b/g, '[identificador]');
 }
-export function buildAiDataset(db: any, days: number, now = new Date()) {
-  if (![7,30,90].includes(days)) throw new CommerceError(400, 'Escolha um período de 7, 30 ou 90 dias.');
-  const end = new Date(`${businessDay(now)}T00:00:00-03:00`).getTime();
-  const start = end - days * 86400000, previousStart = start - days * 86400000;
+export function buildAiDataset(db: any, period: number | string, now = new Date()) {
+  const isSpecificDay = typeof period === 'string';
+  const todayStart = new Date(`${businessDay(now)}T00:00:00-03:00`).getTime();
+  let days: number, start: number, end: number, previousStart: number;
+  let specificDate: string | undefined;
+  if (isSpecificDay) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(period)) throw new CommerceError(400, 'Data inválida.');
+    const dayStart = new Date(`${period}T00:00:00-03:00`).getTime();
+    if (!Number.isFinite(dayStart)) throw new CommerceError(400, 'Data inválida.');
+    if (dayStart >= todayStart) throw new CommerceError(400, 'Escolha um dia completo, até ontem.');
+    start = dayStart; end = dayStart + 86400000; previousStart = start - 86400000; days = 1; specificDate = period;
+  } else {
+    if (![7,30,90].includes(period)) throw new CommerceError(400, 'Escolha um período de 7, 30 ou 90 dias, ou um dia específico.');
+    end = todayStart; start = end - period * 86400000; previousStart = start - period * 86400000; days = period;
+  }
   const all = (Array.isArray(db.reviews) ? db.reviews : []).filter((r: any) => Number.isFinite(new Date(r.createdAt).getTime()));
   const inRange = (r: any, a: number, b: number) => { const t = new Date(r.createdAt).getTime(); return t >= a && t < b; };
   const current = all.filter((r: any) => inRange(r,start,end));
@@ -119,7 +130,7 @@ export function buildAiDataset(db: any, days: number, now = new Date()) {
   for (const comment of comments) facts.push({id:comment.id,text:'Comentário anonimizado presente na amostra analisada.'});
   const dataset = {
     companyName:safe(db.settings?.name || 'Estabelecimento'),
-    period:{days,start:new Date(start).toISOString(),end:new Date(end).toISOString(),previousStart:new Date(previousStart).toISOString(),previousEnd:new Date(start).toISOString(),timezone:'America/Sao_Paulo',endExclusive:true},
+    period:{days,date:specificDate,start:new Date(start).toISOString(),end:new Date(end).toISOString(),previousStart:new Date(previousStart).toISOString(),previousEnd:new Date(start).toISOString(),timezone:'America/Sao_Paulo',endExclusive:true},
     totals:{current:current.length,previous:previous.length,average:currentMean,previousAverage:previousMean},
     sufficient,comparable,categories:categoryStats,distribution,products,staff,hours,comments,
     commentSample:{included:comments.length,total:commented.length},facts,
