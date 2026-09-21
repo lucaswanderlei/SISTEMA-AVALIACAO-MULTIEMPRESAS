@@ -1,7 +1,6 @@
 import { BillingAdmin } from './BillingAdmin';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Activity,
   AlertTriangle,
   BarChart3,
   Building2,
@@ -24,7 +23,6 @@ import {
   ToggleLeft,
   ToggleRight,
   Trash2,
-  Users,
   X,
 } from 'lucide-react';
 
@@ -141,7 +139,7 @@ const formatDate = (value?: string | null) => {
 };
 
 export function SuperAdmin() {
-  const [token, setToken] = useState(() => sessionStorage.getItem('super_admin_token') || '');
+  const [token, setToken] = useState(() => localStorage.getItem('super_admin_token') || '');
   const [masterLogin, setMasterLogin] = useState('');
   const [masterPassword, setMasterPassword] = useState('');
   const [showMasterPassword, setShowMasterPassword] = useState(false);
@@ -257,7 +255,7 @@ export function SuperAdmin() {
         request('/api/admin/dashboard', { cache: 'no-store' }),
       ]);
       if (companiesRes.status === 401 || dashboardRes.status === 401) {
-        sessionStorage.removeItem('super_admin_token');
+        localStorage.removeItem('super_admin_token');
         setToken('');
         throw new Error('Sessão mestre expirada. Entre novamente.');
       }
@@ -326,7 +324,7 @@ export function SuperAdmin() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.token) throw new Error(data.error || 'Login ou senha mestre inválidos.');
-      sessionStorage.setItem('super_admin_token', data.token);
+      localStorage.setItem('super_admin_token', data.token);
       setToken(data.token);
       setMasterPassword('');
     } catch (e: any) {
@@ -534,7 +532,7 @@ export function SuperAdmin() {
           </div>
           <button
             onClick={() => {
-              sessionStorage.removeItem('super_admin_token');
+              localStorage.removeItem('super_admin_token');
               setToken('');
               setCompanies([]);
               setDashboard(null);
@@ -549,7 +547,7 @@ export function SuperAdmin() {
       <main className="max-w-7xl mx-auto p-4 sm:p-6 space-y-6">
         {error && <div className="bg-rose-50 text-rose-700 border border-rose-200 rounded-xl p-3 text-sm font-semibold">{error}</div>}
 
-        <section className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+        <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <div className="bg-white rounded-2xl border border-stone-200 p-4">
             <div className="text-xs font-bold text-stone-500 flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5" />Empresas</div>
             <div className="text-2xl font-black text-stone-900 mt-1">{dashboard?.totals.companies ?? companies.length}</div>
@@ -557,15 +555,6 @@ export function SuperAdmin() {
           <div className="bg-white rounded-2xl border border-stone-200 p-4">
             <div className="text-xs font-bold text-emerald-600 flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" />Ativas</div>
             <div className="text-2xl font-black text-stone-900 mt-1">{dashboard?.totals.active ?? summary.active}</div>
-          </div>
-          <div className="bg-white rounded-2xl border border-stone-200 p-4">
-            <div className="text-xs font-bold text-sky-600 flex items-center gap-1.5"><Users className="w-3.5 h-3.5" />Clientes únicos</div>
-            <div className="text-2xl font-black text-stone-900 mt-1">{dashboard?.totals.uniqueCustomers ?? 0}</div>
-          </div>
-          <div className="bg-white rounded-2xl border border-stone-200 p-4">
-            <div className="text-xs font-bold text-violet-600 flex items-center gap-1.5"><Activity className="w-3.5 h-3.5" />Avaliações</div>
-            <div className="text-2xl font-black text-stone-900 mt-1">{dashboard?.totals.totalReviews ?? summary.reviews}</div>
-            <div className="text-[10px] text-stone-400 mt-0.5">{dashboard?.totals.reviews30d ?? 0} nos últimos 30 dias</div>
           </div>
           <div className="bg-white rounded-2xl border border-stone-200 p-4">
             <div className="text-xs font-bold text-amber-600 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" />Vencem em 7 dias</div>

@@ -109,10 +109,10 @@ export function UserAccessManager() {
     if (ownerCredentialsChanged) {
       window.setTimeout(() => {
         try {
-          sessionStorage.removeItem(tenantKey('restaurant_manager_auth'));
-          sessionStorage.removeItem(tenantKey('restaurant_manager_token'));
-          sessionStorage.removeItem(tenantKey('restaurant_manager_role'));
-          sessionStorage.removeItem(tenantKey('restaurant_manager_access'));
+          localStorage.removeItem(tenantKey('restaurant_manager_auth'));
+          localStorage.removeItem(tenantKey('restaurant_manager_token'));
+          localStorage.removeItem(tenantKey('restaurant_manager_role'));
+          localStorage.removeItem(tenantKey('restaurant_manager_access'));
         } catch {}
         window.location.reload();
       }, 1200);

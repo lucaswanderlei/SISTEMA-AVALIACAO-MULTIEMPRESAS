@@ -22,7 +22,7 @@ export function BillingPage(){
   useEffect(()=>{load().catch(e=>setError(e.message));const t=setInterval(()=>load().catch(()=>{}),15000);return()=>clearInterval(t);},[]);
   const run=async(fn:()=>Promise<void>)=>{setBusy(true);setError('');setNotice('');try{await fn();await load();}catch(e:any){setError(e.message);await load().catch(()=>{});}finally{setBusy(false);}};
   const post=async(url:string,body:any={})=>{const r=await tenantFetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();if(!r.ok)throw Error(d.error||'Operação não confirmada.');return d;};
-  const signIn=(e:FormEvent)=>{e.preventDefault();void run(async()=>{const r=await apiManagerLogin(login,password,true);if(!r.success)throw Error(r.error);sessionStorage.setItem(tenantKey('restaurant_manager_auth'),'true');sessionStorage.setItem(tenantKey('restaurant_manager_role'),r.role||'manager');sessionStorage.setItem(tenantKey('restaurant_manager_access'),r.accessLevel||'owner');setPassword('');});};
+  const signIn=(e:FormEvent)=>{e.preventDefault();void run(async()=>{const r=await apiManagerLogin(login,password,true);if(!r.success)throw Error(r.error);localStorage.setItem(tenantKey('restaurant_manager_auth'),'true');localStorage.setItem(tenantKey('restaurant_manager_role'),r.role||'manager');localStorage.setItem(tenantKey('restaurant_manager_access'),r.accessLevel||'owner');setPassword('');});};
   useEffect(()=>{if(data?.company?.plano)setPlan(data.company.plano);},[data?.company?.plano]);
   useEffect(()=>{if(data?.company?.email_cobranca&&!email)setEmail(data.company.email_cobranca);},[data?.company?.email_cobranca]);
   const offer=data?.offers?.find((x:any)=>x.plan===plan);const amount=offer?.[cycle]||0;

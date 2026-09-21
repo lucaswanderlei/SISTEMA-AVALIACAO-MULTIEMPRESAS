@@ -38,7 +38,7 @@ export function VoucherValidationPortal() {
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [authenticated, setAuthenticated] = useState(() => {
-    try { return Boolean(sessionStorage.getItem(tenantKey('restaurant_manager_token'))); } catch { return false; }
+    try { return Boolean(localStorage.getItem(tenantKey('restaurant_manager_token'))); } catch { return false; }
   });
 
   const stopCamera = () => {
@@ -91,10 +91,10 @@ export function VoucherValidationPortal() {
 
   const logout = () => {
     try {
-      sessionStorage.removeItem(tenantKey('restaurant_manager_auth'));
-      sessionStorage.removeItem(tenantKey('restaurant_manager_token'));
-      sessionStorage.removeItem(tenantKey('restaurant_manager_role'));
-      sessionStorage.removeItem(tenantKey('restaurant_manager_access'));
+      localStorage.removeItem(tenantKey('restaurant_manager_auth'));
+      localStorage.removeItem(tenantKey('restaurant_manager_token'));
+      localStorage.removeItem(tenantKey('restaurant_manager_role'));
+      localStorage.removeItem(tenantKey('restaurant_manager_access'));
     } catch {}
     window.location.reload();
   };
@@ -112,10 +112,10 @@ export function VoucherValidationPortal() {
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.token || data.accessLevel === 'viewer') { setLoginError(data.error || 'Este acesso não pode validar brindes.'); return; }
       const prefix = `${getCompanyId()}::`;
-      sessionStorage.setItem(`${prefix}restaurant_manager_auth`, 'true');
-      sessionStorage.setItem(`${prefix}restaurant_manager_token`, data.token);
-      sessionStorage.setItem(`${prefix}restaurant_manager_role`, 'manager');
-      sessionStorage.setItem(`${prefix}restaurant_manager_access`, data.accessLevel || 'redeemer');
+      localStorage.setItem(`${prefix}restaurant_manager_auth`, 'true');
+      localStorage.setItem(`${prefix}restaurant_manager_token`, data.token);
+      localStorage.setItem(`${prefix}restaurant_manager_role`, 'manager');
+      localStorage.setItem(`${prefix}restaurant_manager_access`, data.accessLevel || 'redeemer');
       setAuthenticated(true);
     } catch { setLoginError('Não foi possível entrar agora. Tente novamente.'); }
     finally { setLoading(false); }

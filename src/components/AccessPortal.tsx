@@ -62,7 +62,7 @@ export function AccessPortal() {
       }
 
       if (data.role === 'superadmin') {
-        sessionStorage.setItem('super_admin_token', data.token);
+        localStorage.setItem('super_admin_token', data.token);
         window.location.assign(data.redirect || '/super-admin');
         return;
       }
@@ -73,10 +73,10 @@ export function AccessPortal() {
       }
 
       const prefix = `${data.companyId}::`;
-      sessionStorage.setItem(`${prefix}restaurant_manager_auth`, 'true');
-      sessionStorage.setItem(`${prefix}restaurant_manager_token`, data.token);
-      sessionStorage.setItem(`${prefix}restaurant_manager_role`, 'manager');
-      sessionStorage.setItem(`${prefix}restaurant_manager_access`, data.accessLevel || 'manager');
+      localStorage.setItem(`${prefix}restaurant_manager_auth`, 'true');
+      localStorage.setItem(`${prefix}restaurant_manager_token`, data.token);
+      localStorage.setItem(`${prefix}restaurant_manager_role`, 'manager');
+      localStorage.setItem(`${prefix}restaurant_manager_access`, data.accessLevel || 'manager');
       localStorage.setItem('multiempresa_current_company', data.companyId);
       window.location.assign(data.redirect || `/gerencia?empresa=${encodeURIComponent(data.companyId)}`);
     } catch {
@@ -114,10 +114,10 @@ export function AccessPortal() {
         return;
       }
       const prefix = `${data.companyId}::`;
-      sessionStorage.setItem(`${prefix}restaurant_manager_auth`, 'true');
-      sessionStorage.setItem(`${prefix}restaurant_manager_token`, data.token);
-      sessionStorage.setItem(`${prefix}restaurant_manager_role`, 'manager');
-      sessionStorage.setItem(`${prefix}restaurant_manager_access`, 'owner');
+      localStorage.setItem(`${prefix}restaurant_manager_auth`, 'true');
+      localStorage.setItem(`${prefix}restaurant_manager_token`, data.token);
+      localStorage.setItem(`${prefix}restaurant_manager_role`, 'manager');
+      localStorage.setItem(`${prefix}restaurant_manager_access`, 'owner');
       localStorage.setItem('multiempresa_current_company', data.companyId);
       window.location.assign(data.redirect || `/gerencia?empresa=${encodeURIComponent(data.companyId)}`);
     } catch {
