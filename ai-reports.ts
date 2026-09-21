@@ -47,8 +47,15 @@ export async function callGemini(dataset: any, apiKey: string, model: string): P
       maxOutputTokens:8192, abortSignal:AbortSignal.timeout(55000), httpOptions:{timeout:55000},
     }});
     return JSON.parse(response.text || '{}');
-  } catch {
-    // Never expose upstream error bodies, API keys or customer comments in logs/responses.
+  } catch (err: any) {
+    // Log apenas status/mensagem curta (nunca o corpo da requisição, que contém
+    // avaliações de clientes, nem a API key) — ajuda a diagnosticar no Render
+    // sem expor dados sensíveis nos logs.
+    console.error('[AI report] Falha ao chamar o Gemini:', {
+      status: err?.status ?? err?.code ?? err?.response?.status,
+      message: String(err?.message || err).slice(0, 300),
+      model,
+    });
     throw new CommerceError(502,'Não foi possível gerar o relatório de IA agora. Verifique a configuração do serviço ou tente novamente mais tarde.','AI_PROVIDER_ERROR');
   }
 }
