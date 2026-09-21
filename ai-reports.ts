@@ -52,9 +52,9 @@ export async function callGemini(dataset: any, apiKey: string, model: string): P
     throw new CommerceError(502,'Não foi possível gerar o relatório de IA agora. Verifique a configuração do serviço ou tente novamente mais tarde.','AI_PROVIDER_ERROR');
   }
 }
-export async function generatePremiumReport(pool: any, companyId: string, options: { days?: number; date?: string; refresh?: boolean }, config: { apiKey: string; model: string }, generate=callGemini, now=new Date()) {
+export async function generatePremiumReport(pool: any, companyId: string, options: { days?: number; range?: { start: string; end: string }; refresh?: boolean }, config: { apiKey: string; model: string }, generate=callGemini, now=new Date()) {
   const company = await readPremiumCompany(pool,companyId);
-  const period: number | string = options.date ?? options.days!;
+  const period: number | { start: string; end: string } = options.range ?? options.days!;
   const prepared = buildAiDataset(company.dados,period,now);
   if(!prepared.dataset.totals.current) throw new CommerceError(422,'Ainda não há avaliações nos dias completos selecionados. Escolha outro período.','AI_NO_DATA');
   const hash=digest(`${digest(AI_REPORT_PROMPT)}:${config.model}:${prepared.fingerprint}`);
@@ -100,13 +100,14 @@ export function registerAiRoutes(app:any,pool:any,auth:any,editor:any,companyId:
   });
   app.post('/api/ai/reports',auth,editor,async(req:any,res:any)=>{
     const days=req.body?.days;
-    const date=req.body?.date;
-    if(date!==undefined){
-      if(typeof date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(date))throw new CommerceError(400,'Data inválida.');
+    const start=req.body?.start, end=req.body?.end;
+    const hasRange=start!==undefined||end!==undefined;
+    if(hasRange){
+      if(typeof start!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(start)||typeof end!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(end))throw new CommerceError(400,'Datas inválidas.');
     } else if(!Number.isInteger(days)) {
       throw new CommerceError(400,'Período inválido.');
     }
-    const report=await generatePremiumReport(pool,companyId(),{days:date===undefined?days:undefined,date,refresh:req.body?.refresh===true},configuration());
+    const report=await generatePremiumReport(pool,companyId(),{days:hasRange?undefined:days,range:hasRange?{start,end}:undefined,refresh:req.body?.refresh===true},configuration());
     res.setHeader('Cache-Control','no-store');res.json({success:true,report});
   });
 }

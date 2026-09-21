@@ -1,4 +1,4 @@
-# Dia específico na análise de IA — patch
+# Intervalo personalizado na análise de IA — patch
 
 Este pacote contém **somente** os 4 arquivos alterados. Preserve a estrutura
 de pastas ao enviar para a raiz do seu repositório (sobrescrevendo os
@@ -11,16 +11,20 @@ existentes):
 
 ## O que mudou
 
-- Agora dá para escolher **"Dia específico"** no seletor de período da aba
-  "IA — Premium", além de 7/30/90 dias. Aparece um campo de data (só permite
-  até ontem, igual aos outros períodos).
-- O relatório de um dia específico é comparado com o dia imediatamente
-  anterior (mesma lógica que já existia: período atual x período anterior de
-  mesma duração).
-- Backend (`ai-reports.ts`, `ai-report-data.ts`) passou a aceitar `date`
-  (formato `YYYY-MM-DD`) além de `days` no corpo do POST `/api/ai/reports`.
-- Log de auditoria (`src/server.ts`) agora registra também a data quando
-  usada.
+- Agora dá para escolher **"Escolher intervalo (de/até)"** no seletor de
+  período da aba "IA — Premium", além de 7/30/90 dias. Aparecem dois campos
+  de data: "De" e "Até" (ambos limitados até ontem; "Até" não pode ser
+  antes de "De").
+- Funciona tanto para um único dia (De = Até) quanto para um intervalo de
+  vários dias.
+- O relatório do intervalo escolhido é comparado com o período
+  imediatamente anterior de mesma duração (mesma lógica que já existia
+  entre "período atual" e "período anterior").
+- Backend (`ai-reports.ts`, `ai-report-data.ts`) passou a aceitar `start` e
+  `end` (formato `YYYY-MM-DD`) além de `days` no corpo do POST
+  `/api/ai/reports`.
+- Log de auditoria (`src/server.ts`) agora registra também `start`/`end`
+  quando usados.
 
 ## Como aplicar
 
@@ -32,7 +36,14 @@ existentes):
    **Manual Deploy → Deploy latest commit**.
 4. Depois do deploy, recarregue a página do sistema e confira a aba
    "IA — Premium": o seletor de período deve mostrar a opção
-   "Dia específico".
+   "Escolher intervalo (de/até)".
 
 Nenhuma variável de ambiente nova é necessária — continua usando o mesmo
 `GEMINI_API_KEY`/`GEMINI_MODEL` já configurado.
+
+## Se você já tinha aplicado o patch anterior (dia único)
+
+Este pacote substitui aquele: a opção antiga "Dia específico" (campo único
+de data, parâmetro `date`) foi trocada por este seletor de intervalo
+"De/Até" (parâmetros `start`/`end`), que cobre também o caso de um único
+dia. Basta sobrescrever os arquivos de novo com os desta pasta.
