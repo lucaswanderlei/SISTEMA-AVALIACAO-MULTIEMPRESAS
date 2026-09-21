@@ -244,7 +244,7 @@ async function sendNewSignupNotification(details: {
       to: recipients,
       reply_to: details.email,
       subject: `Novo cadastro: ${details.companyName}`,
-      text: `Um novo cadastro iniciou o teste grátis de 7 dias.\n\nResponsável: ${details.fullName}\nEmpresa: ${details.companyName}\nE-mail: ${details.email}\nTelefone: ${details.phone}\n${details.documentType}: ${maskBillingDocument(details.document)}\n\nO cadastro foi criado no Avalia e Ganha.`,
+      text: `Um novo cadastro aguarda a contratação do plano.\n\nResponsável: ${details.fullName}\nEmpresa: ${details.companyName}\nE-mail: ${details.email}\nTelefone: ${details.phone}\n${details.documentType}: ${maskBillingDocument(details.document)}\n\nO cadastro foi criado no Avalia e Ganha.`,
     }),
   });
   if (!response.ok) {
@@ -1890,7 +1890,10 @@ if (totalEmpresas === 0) {
         if (!exists.rows[0]) break;
         empresaId = makeAvailableCompanyId(companyName);
       }
-      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      // O cadastro cria a conta, mas o painel só é liberado após o primeiro
+      // pagamento. Uma data já vencida preserva o acesso do proprietário à
+      // página de assinatura e bloqueia o uso operacional do sistema.
+      const expiresAt = new Date().toISOString();
       const db = freshDb();
       db.settings.name = companyName;
       (db.settings as any).managerLogin = billingDocument.value;
@@ -1901,7 +1904,7 @@ if (totalEmpresas === 0) {
         await client.query(
           `INSERT INTO avaliacao_empresas
             (empresa_id,nome,slug,ativo,dados,login,senha_hash,plano,status_assinatura,vencimento_em,titular_nome,email_cobranca,telefone_cobranca,documento_cobranca,tipo_documento_cobranca)
-           VALUES ($1,$2,$1,TRUE,$3::jsonb,$4,$5,'pro','trial',$6,$7,$8,$9,$10,$11)`,
+           VALUES ($1,$2,$1,TRUE,$3::jsonb,$4,$5,'pro','active',$6,$7,$8,$9,$10,$11)`,
           [empresaId, companyName, JSON.stringify(db), billingDocument.value, hashPassword(password), expiresAt, fullName, email, phone, billingDocument.value, billingDocument.type]
         );
         await client.query(
@@ -1939,8 +1942,7 @@ if (totalEmpresas === 0) {
         companyId: empresaId,
         userName: fullName,
         accessLevel: 'owner',
-        trialEndsAt: expiresAt,
-        redirect: `/gerencia?empresa=${encodeURIComponent(empresaId)}`,
+        redirect: `/assinatura?empresa=${encodeURIComponent(empresaId)}`,
       });
     } catch (err: any) {
       console.error('[Cadastro público]', err);
