@@ -73,6 +73,7 @@ export interface Review {
   marketingConsentRevokedAt?: string;
   privacyAnonymizedAt?: string;
   createdAt: string;
+  isDemoData?: boolean; // Avaliação fictícia gerada para demonstração comercial (nunca real)
 }
 
 export interface RewardOption {
