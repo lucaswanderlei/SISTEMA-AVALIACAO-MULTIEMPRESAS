@@ -769,12 +769,18 @@ export const TableDisplayCard10x8: React.FC<TableDisplayCard10x8Props> = ({
       </div>
 
       {/* Card Footer */}
-      <div className="pt-2 border-t border-stone-800/80 flex items-center justify-between text-[9px] text-stone-400">
-        <span>Rápido • Menos de 1 minuto</span>
-        <span className="text-amber-400 font-semibold flex items-center gap-1">
-          <Gift className="w-2.5 h-2.5" />
-          Cortesia Válida por {settings.rewardValidityDays || 15} dias
-        </span>
+      <div className="pt-2 border-t border-stone-800/80 space-y-1">
+        <div className="flex items-center justify-between text-[9px] text-stone-400">
+          <span>Rápido • Menos de 1 minuto</span>
+          <span className="text-amber-400 font-semibold flex items-center gap-1">
+            <Gift className="w-2.5 h-2.5" />
+            Cortesia Válida por {settings.rewardValidityDays || 15} dias
+          </span>
+        </div>
+        <div className="flex items-center justify-center gap-1 text-[8px] text-stone-500">
+          <Globe className="w-2.5 h-2.5" />
+          avaliaeganha.com.br
+        </div>
       </div>
     </div>
   );
@@ -885,6 +891,12 @@ const AcrylicStandCard: React.FC<AcrylicStandCardProps> = ({
           1. Aponte a câmera • 2. Cadastre Nome & Telefone • 3. Brinde válido por {settings.rewardValidityDays || 15} dias!
         </div>
       </div>
+
+      {/* Footer: site */}
+      <div className={`mt-3 pt-2.5 border-t ${['premium','prize','table'].includes(template) ? 'border-white/10 text-stone-500' : 'border-stone-200 text-stone-400'} flex items-center justify-center gap-1 text-[10px]`}>
+        <Globe className="w-3 h-3" />
+        avaliaeganha.com.br
+      </div>
     </div>
   );
 };
@@ -934,6 +946,11 @@ const SingleIndividualTableCard: React.FC<SingleIndividualTableCardProps> = ({
       <div className="flex items-center justify-center gap-1.5 text-[11px] text-stone-300 font-medium">
         <Gift className="w-3.5 h-3.5 text-amber-400" />
         <span>Cortesia garantida (Válida {settings.rewardValidityDays || 15} dias)</span>
+      </div>
+
+      <div className="mt-2 pt-2 border-t border-stone-800/80 flex items-center justify-center gap-1 text-[9px] text-stone-500">
+        <Globe className="w-2.5 h-2.5" />
+        avaliaeganha.com.br
       </div>
 
       <button
