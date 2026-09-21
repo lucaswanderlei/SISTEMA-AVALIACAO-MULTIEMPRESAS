@@ -153,6 +153,8 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
 }) => {
   const isViewer = accessLevel === 'viewer';
   const isOwner = accessLevel === 'owner' || accessLevel === 'superadmin';
+  const isProOrPremium = companyPlan === 'pro' || companyPlan === 'premium';
+  const isPremium = companyPlan === 'premium';
   const pillarLabels = {
     service: settings.servicePillarName?.trim() || 'Atendimento & Garçons',
     ambiance: settings.ambiancePillarName?.trim() || 'Ambiente & Conforto',
@@ -174,7 +176,10 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
   }, [isViewer, activeTab]);
 
 
-  useEffect(() => { if (companyPlan !== 'premium' && activeTab === 'ai') setActiveTab('metrics'); }, [companyPlan, activeTab]);
+  useEffect(() => {
+    if (companyPlan !== 'premium' && activeTab === 'ai') setActiveTab('metrics');
+    if (companyPlan === 'basic' && activeTab === 'reports') setActiveTab('metrics');
+  }, [companyPlan, activeTab]);
 
   const [reportPeriod, setReportPeriod] = useState<'today' | '7d' | '30d' | 'all'>('30d');
 
@@ -1262,7 +1267,7 @@ return (
         </button>
         )}
 
-        <button
+        {isProOrPremium && <button
           type="button"
           onClick={() => setActiveTab('reports')}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition ${
@@ -1273,7 +1278,7 @@ return (
         >
           <FileText className="w-4 h-4" />
           <span>Relatórios & Sugestões</span>
-        </button>
+        </button>}
 
         {!isViewer && (
         <button
@@ -3006,6 +3011,14 @@ return (
               <label className="block text-xs font-semibold text-stone-700 mb-1">Descrição</label>
               <textarea rows={3} value={settings.evaluationDescription || 'Adoramos ter você aqui! Conte para nós o que achou da sua visita e receba um mimo especial em agradecimento.'} onChange={(e) => onUpdateSettings({ ...settings, evaluationDescription: e.target.value })} className="w-full text-xs p-2.5 rounded-xl border border-stone-200 focus:border-rose-500 outline-none resize-y" />
             </div>
+          </div>
+
+          <div className="space-y-2 p-3 rounded-xl border border-amber-200 bg-amber-50/60">
+            <h4 className="text-xs font-black text-stone-800">Avaliação no Google <span className="text-amber-700">Premium</span></h4>
+            {isPremium ? <>
+              <p className="text-[11px] text-stone-600">Após concluir a avaliação e receber o voucher, o cliente verá um botão opcional para avaliar também no Google.</p>
+              <input type="url" value={settings.googleReviewUrl || ''} onChange={(e) => onUpdateSettings({ ...settings, googleReviewUrl: e.target.value })} placeholder="Cole aqui o link de avaliação do Google" className="w-full text-xs p-2.5 rounded-xl border border-amber-300 bg-white focus:border-amber-500 outline-none" />
+            </> : <p className="text-[11px] text-stone-600">Disponível no Premium. Faça upgrade para adicionar o link da sua empresa no Google após o voucher.</p>}
           </div>
 
           <div className="space-y-3">

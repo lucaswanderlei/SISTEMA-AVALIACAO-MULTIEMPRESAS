@@ -690,7 +690,7 @@ export function SuperAdmin() {
             </div>
             <input type="email" value={companyRecoveryEmail} onChange={(e) => setCompanyRecoveryEmail(e.target.value)} placeholder="E-mail de recuperação" className="border border-stone-300 rounded-xl px-4 py-3" />
             <select value={companyPlan} onChange={(e) => setCompanyPlan(e.target.value as SubscriptionPlan)} className="border border-stone-300 rounded-xl px-4 py-3 bg-white">
-              <option value="basic">Plano Básico</option>
+              <option value="basic">Plano Standard</option>
               <option value="pro">Plano Pro</option>
               <option value="premium">Plano Premium</option>
             </select>
@@ -745,7 +745,7 @@ export function SuperAdmin() {
                       <input type="password" minLength={6} value={editingPassword} onChange={(e) => setEditingPassword(e.target.value)} placeholder="Nova senha (opcional)" className="border border-stone-300 rounded-xl px-3 py-2" />
                       <input type="email" value={editingRecoveryEmail} onChange={(e) => setEditingRecoveryEmail(e.target.value)} placeholder="E-mail de recuperação" className="border border-stone-300 rounded-xl px-3 py-2" />
                       <select value={editingPlan} onChange={(e) => setEditingPlan(e.target.value as SubscriptionPlan)} className="border border-stone-300 rounded-xl px-3 py-2 bg-white">
-                        <option value="basic">Plano Básico</option>
+                        <option value="basic">Plano Standard</option>
                         <option value="pro">Plano Pro</option>
                         <option value="premium">Plano Premium</option>
                       </select>

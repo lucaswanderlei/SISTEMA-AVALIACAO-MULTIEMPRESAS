@@ -1086,6 +1086,16 @@ export const CustomerEvaluation: React.FC<CustomerEvaluationProps> = ({
             autoSendMode={settings.autoSendMode ?? 'silent_api'}
           />
 
+          {settings.googleReviewUrl && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-center">
+              <p className="text-sm font-bold text-stone-900">Quer contar sua experiência para outras pessoas?</p>
+              <p className="mt-1 text-xs text-stone-600">Sua avaliação é opcional e ajuda {settings.name} a ser encontrado no Google.</p>
+              <a href={settings.googleReviewUrl} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-black text-stone-900 shadow-sm ring-1 ring-amber-300 hover:bg-amber-100">
+                <Star className="h-4 w-4 fill-amber-400 text-amber-500" /> Avaliar também no Google
+              </a>
+            </div>
+          )}
+
           <div className="text-center pt-4">
             <button
               type="button"
