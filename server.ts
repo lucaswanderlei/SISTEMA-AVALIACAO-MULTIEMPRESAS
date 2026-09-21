@@ -200,6 +200,59 @@ Se você não solicitou a alteração, ignore esta mensagem.`,
     throw new Error(`Não foi possível enviar o e-mail de recuperação.${detail ? ` ${detail.slice(0, 180)}` : ''}`);
   }
 }
+
+function signupNotificationRecipients(): string[] {
+  const configured = String(
+    process.env.NEW_SIGNUP_NOTIFICATION_RECIPIENTS
+      || 'contato@avaliaeganha.com.br,lucaswanderlei7@gmail.com'
+  );
+  return [...new Set(configured
+    .split(',')
+    .map((recipient) => recipient.trim().toLowerCase())
+    .filter((recipient) => isValidEmail(recipient)))];
+}
+
+function maskBillingDocument(document: string): string {
+  const digits = digitsOnly(document);
+  if (digits.length <= 4) return digits;
+  return `${'*'.repeat(Math.max(0, digits.length - 4))}${digits.slice(-4)}`;
+}
+
+async function sendNewSignupNotification(details: {
+  fullName: string;
+  companyName: string;
+  email: string;
+  phone: string;
+  document: string;
+  documentType: 'CPF' | 'CNPJ';
+}): Promise<void> {
+  const recipients = signupNotificationRecipients();
+  const apiKey = String(process.env.RESEND_API_KEY || '').trim();
+  const from = String(process.env.PASSWORD_RESET_FROM_EMAIL || process.env.RESEND_FROM_EMAIL || '').trim();
+  if (!apiKey || !from || recipients.length === 0) {
+    throw new Error('Notificação de novo cadastro não configurada.');
+  }
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from,
+      to: recipients,
+      reply_to: details.email,
+      subject: `Novo cadastro: ${details.companyName}`,
+      text: `Um novo cadastro iniciou o teste grátis de 7 dias.\n\nResponsável: ${details.fullName}\nEmpresa: ${details.companyName}\nE-mail: ${details.email}\nTelefone: ${details.phone}\n${details.documentType}: ${maskBillingDocument(details.document)}\n\nO cadastro foi criado no Avalia e Ganha.`,
+    }),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(`Resend recusou a notificação de novo cadastro.${detail ? ` ${detail.slice(0, 180)}` : ''}`);
+  }
+}
+
 async function initPostgres() {
   try {
     await pool.query(`
@@ -1866,6 +1919,18 @@ if (totalEmpresas === 0) {
       }
 
       tenantDbs.set(empresaId, db);
+      // O cadastro não depende do e-mail: se o provedor estiver indisponível,
+      // a empresa continua criada e o problema fica registrado no servidor.
+      void sendNewSignupNotification({
+        fullName,
+        companyName,
+        email,
+        phone,
+        document: billingDocument.value,
+        documentType: billingDocument.type,
+      }).catch((notificationError) => {
+        console.warn('[Notificação de novo cadastro]', notificationError);
+      });
       const token = createAuthSession({ role: 'manager', companyId: empresaId, userId: `owner:${empresaId}`, userName: fullName, accessLevel: 'owner' });
       return res.status(201).json({
         success: true,
