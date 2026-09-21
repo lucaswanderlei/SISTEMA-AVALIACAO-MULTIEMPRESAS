@@ -437,6 +437,7 @@ const DEFAULT_SETTINGS = {
   logoUrl: '',
   evaluationTitle: 'Como foi sua experiência hoje?',
   evaluationDescription: 'Adoramos ter você aqui! Conte para nós o que achou da sua visita e receba um mimo especial em agradecimento.',
+  googleReviewUrl: '',
   quickTagsOptions: [
     'Coxinhas sequinhas e quentes',
     'Massa crocante e leve',
@@ -1271,7 +1272,7 @@ if (totalEmpresas === 0) {
     return res.status(403).json({ error: 'Apenas o proprietário/administrador principal pode realizar esta ação.' });
   }
 
-  function publicSettingsOnly(settings: Record<string, any>) {
+  function publicSettingsOnly(settings: Record<string, any>, plan?: SubscriptionPlan) {
     const safe = { ...settings };
     // Nunca exponha credenciais, tokens ou dados de gerência na página pública.
     delete safe.managerPin;
@@ -1280,6 +1281,7 @@ if (totalEmpresas === 0) {
     delete safe.whatsappApiToken;
     delete safe.whatsappWebhookVerifyToken;
     delete safe.whatsappCustomMessage;
+    if (plan !== 'premium') delete safe.googleReviewUrl;
     return safe;
   }
 
@@ -2358,7 +2360,7 @@ if (totalEmpresas === 0) {
     try {
       const companyId = currentCompanyId();
       const result = await pool.query(
-        'SELECT dados FROM avaliacao_empresas WHERE empresa_id=$1 AND ativo=TRUE LIMIT 1',
+        'SELECT dados, plano FROM avaliacao_empresas WHERE empresa_id=$1 AND ativo=TRUE LIMIT 1',
         [companyId]
       );
 
@@ -2380,7 +2382,8 @@ if (totalEmpresas === 0) {
       const session = getAuthSession(_req);
       const canManage = sessionCanAccessDashboard(_req, companyId);
       const canViewPrivateSettings = Boolean(canManage && (session?.role === 'superadmin' || normalizeAccessLevel(session?.accessLevel) !== 'viewer'));
-      const responseSettings: any = canViewPrivateSettings ? { ...db.settings } : publicSettingsOnly(db.settings as any);
+      const plan = normalizeSubscriptionPlan(result.rows[0].plano);
+      const responseSettings: any = canViewPrivateSettings ? { ...db.settings } : publicSettingsOnly(db.settings as any, plan);
       return res.json({
         settings: responseSettings,
         rewards: db.rewards,
@@ -2811,6 +2814,13 @@ if (totalEmpresas === 0) {
       }
       const companyId = currentCompanyId();
       const waiters = req.body.filter((waiter: any) => waiter && typeof waiter.id === 'string' && String(waiter.name || '').trim());
+      const planRow = await pool.query('SELECT plano FROM avaliacao_empresas WHERE empresa_id=$1 LIMIT 1', [companyId]);
+      const plan = normalizeSubscriptionPlan(planRow.rows[0]?.plano);
+      const validatorLimit = plan === 'basic' ? 2 : plan === 'pro' ? 5 : Number.POSITIVE_INFINITY;
+      const activeValidators = waiters.filter((waiter: any) => waiter.active !== false).length;
+      if (activeValidators > validatorLimit) {
+        return res.status(403).json({ error: `Seu plano permite até ${validatorLimit} funcionários validadores ativos. Faça upgrade para adicionar mais.` });
+      }
       for (const waiter of waiters) {
         if (!isValidCpf(waiter.cpf)) return res.status(400).json({ error: `Informe um CPF válido para ${String(waiter.name).trim()}.` });
       }
@@ -2868,7 +2878,7 @@ if (totalEmpresas === 0) {
 
       await client.query('BEGIN');
       const locked = await client.query(
-        'SELECT dados FROM avaliacao_empresas WHERE empresa_id=$1 AND ativo=TRUE FOR UPDATE',
+        'SELECT dados, plano FROM avaliacao_empresas WHERE empresa_id=$1 AND ativo=TRUE FOR UPDATE',
         [companyId]
       );
       if (!locked.rows[0]?.dados) {
@@ -2877,6 +2887,15 @@ if (totalEmpresas === 0) {
       }
 
       const currentData = locked.rows[0].dados || {};
+      const plan = normalizeSubscriptionPlan(locked.rows[0].plano);
+      const validatorLimit = plan === 'basic' ? 2 : plan === 'pro' ? 5 : Number.POSITIVE_INFINITY;
+      const requestedWaiters = Array.isArray(waiters) ? waiters : currentData.waiters;
+      const activeValidators = Array.isArray(requestedWaiters) ? requestedWaiters.filter((waiter: any) => waiter?.active !== false).length : 0;
+      if (activeValidators > validatorLimit) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ error: `Seu plano permite até ${validatorLimit} funcionários validadores ativos. Faça upgrade para adicionar mais.` });
+      }
+      if (settings && plan !== 'premium') delete settings.googleReviewUrl;
       const nextData = {
         ...currentData,
         settings:
@@ -2888,6 +2907,7 @@ if (totalEmpresas === 0) {
         // Reviews/voucher state only change through their dedicated server routes.
         reviews: Array.isArray(currentData.reviews) ? currentData.reviews : [],
       };
+      if (plan !== 'premium') delete (nextData.settings as any).googleReviewUrl;
 
       const result = await client.query(
         `UPDATE avaliacao_empresas

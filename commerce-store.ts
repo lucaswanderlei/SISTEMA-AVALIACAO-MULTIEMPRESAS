@@ -1,5 +1,11 @@
 import { CommerceError, clone, digest, businessDay, normalizeReviewPhone, parseReviewInput, issueReview, claimReview } from './commerce-security';
 
+const MONTHLY_REVIEW_LIMIT: Record<string, number> = { basic: 100, pro: 300, premium: Number.POSITIVE_INFINITY };
+
+function reviewMonth(date: Date): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit' }).format(date).slice(0, 7);
+}
+
 export async function initCommerceSchema(pool: any) {
   await pool.query(`CREATE TABLE IF NOT EXISTS avaliacao_review_requests (
     empresa_id TEXT NOT NULL REFERENCES avaliacao_empresas(empresa_id) ON DELETE CASCADE,
@@ -16,11 +22,11 @@ export async function initCommerceSchema(pool: any) {
   )`);
 }
 export async function withCompanyTransaction<T>(pool: any, companyId: string,
-  mutate: (db: any, client: any) => Promise<T> | T): Promise<{ value: T; db: any }> {
+  mutate: (db: any, client: any, company: any) => Promise<T> | T): Promise<{ value: T; db: any }> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const result = await client.query('SELECT dados, ativo, status_assinatura, vencimento_em FROM avaliacao_empresas WHERE empresa_id=$1 FOR UPDATE', [companyId]);
+    const result = await client.query('SELECT dados, ativo, plano, status_assinatura, vencimento_em FROM avaliacao_empresas WHERE empresa_id=$1 FOR UPDATE', [companyId]);
     const company = result.rows[0];
     if (!company) throw new CommerceError(404, 'Empresa não encontrada.');
     if (!company.ativo || company.status_assinatura === 'suspended' || (company.vencimento_em && new Date(company.vencimento_em).getTime() <= Date.now())) {
@@ -28,7 +34,7 @@ export async function withCompanyTransaction<T>(pool: any, companyId: string,
     }
     const db = clone(company.dados);
     db.reviews ??= []; db.rewards ??= []; db.waiters ??= []; db.settings ??= {}; db.privacyRequests ??= [];
-    const value = await mutate(db, client);
+    const value = await mutate(db, client, company);
     await client.query('UPDATE avaliacao_empresas SET dados=$2::jsonb, nome=COALESCE(NULLIF($3,\'\'),nome), atualizado_em=NOW() WHERE empresa_id=$1',
       [companyId, JSON.stringify(db), String(db.settings?.name || '')]);
     await client.query('COMMIT');
@@ -52,7 +58,7 @@ export async function consumePublicReviewRate(pool: any, companyId: string, ip: 
 }
 export async function createPublicReview(pool: any, companyId: string, body: any) {
   const { input, requestHash, payloadHash } = parseReviewInput(body);
-  return withCompanyTransaction(pool, companyId, async (db, client) => {
+  return withCompanyTransaction(pool, companyId, async (db, client, company) => {
     const prior = await client.query('SELECT payload_hash, review_id FROM avaliacao_review_requests WHERE empresa_id=$1 AND request_hash=$2', [companyId, requestHash]);
     if (prior.rows[0]) {
       if (prior.rows[0].payload_hash !== payloadHash) throw new CommerceError(409, 'Este envio já foi processado com outros dados.', 'IDEMPOTENCY_CONFLICT');
@@ -63,6 +69,15 @@ export async function createPublicReview(pool: any, companyId: string, body: any
     }
     if (body.id && db.reviews.some((r: any) => r.id === body.id)) throw new CommerceError(409, 'Avaliações existentes não podem ser alteradas pela página pública.');
     const now = new Date();
+    const plan = String(company.plano || 'pro').toLowerCase();
+    const monthlyLimit = MONTHLY_REVIEW_LIMIT[plan] ?? MONTHLY_REVIEW_LIMIT.pro;
+    const usedThisMonth = db.reviews.filter((review: any) => {
+      const createdAt = new Date(String(review?.createdAt || ''));
+      return !Number.isNaN(createdAt.getTime()) && reviewMonth(createdAt) === reviewMonth(now);
+    }).length;
+    if (usedThisMonth >= monthlyLimit) {
+      throw new CommerceError(403, `O limite de ${monthlyLimit} avaliações deste mês foi atingido. Faça upgrade do plano para continuar recebendo avaliações.`, 'MONTHLY_REVIEW_LIMIT');
+    }
     const day = businessDay(now);
     // Also enforce the rule against evaluations created before this upgrade.
     if (db.reviews.some((r: any) => {
