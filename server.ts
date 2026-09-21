@@ -2,6 +2,7 @@ import { initBillingSchema, registerBillingRoutes, startBillingWorker } from './
 import { initAiSchema, registerAiRoutes } from './ai-reports';
 import { CommerceError, clone, mergeDbChanges, tenantDispatches, updateConsumptionCatalog } from './commerce-security';
 import { initCommerceSchema, withCompanyTransaction, createPublicReview, redeemVoucher, consumePublicReviewRate } from './commerce-store';
+import { buildDemoReviews, stripDemoReviews } from './demo-seed';
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
@@ -52,10 +53,7 @@ function superAdminCredentialsMatch(login: unknown, password: unknown): boolean 
 type CompanyAccessLevel = 'owner' | 'manager' | 'viewer' | 'redeemer';
 type AuthSession = { role: 'superadmin' | 'manager'; companyId?: string; userId?: string; userName?: string; accessLevel?: CompanyAccessLevel; expiresAt: number };
 const authSessions = new Map<string, AuthSession>();
-// Persistent browser login: keep server sessions valid for one year and renew
-// the window whenever an authenticated request is made. Explicit logout still
-// removes the browser token immediately.
-const AUTH_SESSION_TTL_MS = 365 * 24 * 60 * 60 * 1000;
+const AUTH_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 type RateBucket = { count: number; resetAt: number };
 const authRateBuckets = new Map<string, RateBucket>();
 
@@ -99,7 +97,6 @@ function getAuthSession(req: express.Request): AuthSession | null {
     authSessions.delete(token);
     return null;
   }
-  session.expiresAt = Date.now() + AUTH_SESSION_TTL_MS;
   return session;
 }
 
@@ -825,6 +822,16 @@ function describeAuditableMutation(req: express.Request, tenantId: string): Audi
     const id = normalizeCompanyId(decodeURIComponent(adminBackupMatch[1]));
     return { action: 'company.backup.download', entity: 'database', entityId: id, companyId: id, summary: `Backup da empresa ${id} foi baixado pelo SuperAdmin.` };
   }
+  const seedDemoMatch = pathName.match(/^\/api\/admin\/companies\/([^/]+)\/seed-demo$/);
+  if (method === 'POST' && seedDemoMatch) {
+    const id = normalizeCompanyId(decodeURIComponent(seedDemoMatch[1]));
+    return { action: 'company.demo_data.generate', entity: 'database', entityId: id, companyId: id, summary: `Dados fictícios de demonstração foram gerados para a empresa ${id}.`, details: { days: req.body?.days, count: req.body?.count, reset: req.body?.reset === true } };
+  }
+  const clearDemoMatch = pathName.match(/^\/api\/admin\/companies\/([^/]+)\/demo-data$/);
+  if (method === 'DELETE' && clearDemoMatch) {
+    const id = normalizeCompanyId(decodeURIComponent(clearDemoMatch[1]));
+    return { action: 'company.demo_data.clear', entity: 'database', entityId: id, companyId: id, summary: `Dados fictícios de demonstração foram removidos da empresa ${id}.` };
+  }
 
   const privacyExportMatch = pathName.match(/^\/api\/privacy\/requests\/([^/]+)\/export$/);
   if (privacyExportMatch && method === 'GET') {
@@ -1542,6 +1549,39 @@ if (totalEmpresas === 0) {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Disposition', `attachment; filename="backup_${safeExportFilePart(row.nome || companyId)}_${new Date().toISOString().slice(0,10)}.json"`);
     return res.send(JSON.stringify(payload, null, 2));
+  });
+
+  // Gera avaliações fictícias (marcadas com isDemoData) para uma empresa usar
+  // como vitrine comercial. Reaproveita garçons/itens/brindes já cadastrados
+  // na empresa, então configure isso antes de gerar. Nunca toca em avaliações reais.
+  app.post('/api/admin/companies/:id/seed-demo', requireSuperAdmin, async (req, res) => {
+    const companyId = normalizeCompanyId(req.params.id);
+    const days = Number(req.body?.days) || 45;
+    const count = Number(req.body?.count) || 120;
+    const reset = req.body?.reset === true;
+    try {
+      const result = await withCompanyTransaction(pool, companyId, (db) => {
+        if (reset) stripDemoReviews(db);
+        const generated = buildDemoReviews(db, { days, count });
+        db.reviews = [...generated, ...(db.reviews || [])];
+        return { added: generated.length, total: db.reviews.length };
+      });
+      res.json({ success: true, ...result.value });
+    } catch (err: any) {
+      if (err instanceof CommerceError) throw err;
+      return res.status(400).json({ error: err?.message || 'Não foi possível gerar os dados de demonstração.' });
+    }
+  });
+
+  // Remove somente as avaliações fictícias (isDemoData), preservando avaliações reais.
+  app.delete('/api/admin/companies/:id/demo-data', requireSuperAdmin, async (req, res) => {
+    const companyId = normalizeCompanyId(req.params.id);
+    const result = await withCompanyTransaction(pool, companyId, (db) => {
+      const before = (db.reviews || []).length;
+      stripDemoReviews(db);
+      return { removed: before - db.reviews.length, total: db.reviews.length };
+    });
+    res.json({ success: true, ...result.value });
   });
 
   app.get('/api/admin/backup', requireSuperAdmin, async (_req, res) => {
