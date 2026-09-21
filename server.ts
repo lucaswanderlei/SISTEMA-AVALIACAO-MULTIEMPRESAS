@@ -52,7 +52,10 @@ function superAdminCredentialsMatch(login: unknown, password: unknown): boolean 
 type CompanyAccessLevel = 'owner' | 'manager' | 'viewer' | 'redeemer';
 type AuthSession = { role: 'superadmin' | 'manager'; companyId?: string; userId?: string; userName?: string; accessLevel?: CompanyAccessLevel; expiresAt: number };
 const authSessions = new Map<string, AuthSession>();
-const AUTH_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+// Persistent browser login: keep server sessions valid for one year and renew
+// the window whenever an authenticated request is made. Explicit logout still
+// removes the browser token immediately.
+const AUTH_SESSION_TTL_MS = 365 * 24 * 60 * 60 * 1000;
 type RateBucket = { count: number; resetAt: number };
 const authRateBuckets = new Map<string, RateBucket>();
 
@@ -96,6 +99,7 @@ function getAuthSession(req: express.Request): AuthSession | null {
     authSessions.delete(token);
     return null;
   }
+  session.expiresAt = Date.now() + AUTH_SESSION_TTL_MS;
   return session;
 }
 
