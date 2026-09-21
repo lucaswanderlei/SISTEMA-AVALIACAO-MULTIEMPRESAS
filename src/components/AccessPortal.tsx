@@ -108,7 +108,7 @@ export function AccessPortal() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fullName, companyName, document, email, phone, password: newPassword }),
       });
-      const data = (await response.json().catch(() => ({}))) as PortalResponse & { trialEndsAt?: string };
+      const data = (await response.json().catch(() => ({}))) as PortalResponse;
       if (!response.ok || !data.success || !data.token || !data.companyId) {
         setError(data.error || 'Não foi possível concluir seu cadastro.');
         return;
@@ -171,8 +171,8 @@ export function AccessPortal() {
         <div style={{ width: '100%', maxWidth: 440 }}>
           <div style={{ textAlign: 'center', marginBottom: 24 }}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '7px 11px', background: '#f5e9ef', color: '#7a234f', borderRadius: 999, fontWeight: 800, fontSize: 12 }}><ShieldCheck size={15}/> Área segura</span>
-            <h1 style={{ fontSize: 'clamp(30px,5vw,42px)', letterSpacing: '-.045em', lineHeight: 1.02, margin: '14px 0 10px' }}>{mode === 'login' ? (validatorMode ? 'Validar brindes' : 'Entre no seu painel') : mode === 'register' ? 'Crie sua conta grátis' : mode === 'forgot' ? 'Recupere sua senha' : 'Defina uma nova senha'}</h1>
-            <p style={{ margin: 0, color: '#6f6870', lineHeight: 1.55 }}>{mode === 'login' ? 'Use seu CPF e senha. Para o proprietário, o CNPJ também pode ser usado quando cadastrado.' : mode === 'register' ? 'Teste o Avalia e Ganha por 7 dias. Sem cobrança agora.' : mode === 'forgot' ? 'Informe o e-mail ou login cadastrado para receber o link de redefinição.' : 'Crie uma senha segura para voltar a acessar sua conta.'}</p>
+            <h1 style={{ fontSize: 'clamp(30px,5vw,42px)', letterSpacing: '-.045em', lineHeight: 1.02, margin: '14px 0 10px' }}>{mode === 'login' ? (validatorMode ? 'Validar brindes' : 'Entre no seu painel') : mode === 'register' ? 'Crie sua conta' : mode === 'forgot' ? 'Recupere sua senha' : 'Defina uma nova senha'}</h1>
+            <p style={{ margin: 0, color: '#6f6870', lineHeight: 1.55 }}>{mode === 'login' ? 'Use seu CPF e senha. Para o proprietário, o CNPJ também pode ser usado quando cadastrado.' : mode === 'register' ? 'Cadastre sua empresa e escolha o plano para liberar seu painel.' : mode === 'forgot' ? 'Informe o e-mail ou login cadastrado para receber o link de redefinição.' : 'Crie uma senha segura para voltar a acessar sua conta.'}</p>
           </div>
 
           {(mode === 'login' || mode === 'register') && <div style={{ display: 'flex', background: '#f5f1f3', padding: 4, borderRadius: 13, marginBottom: 14 }}>
@@ -214,8 +214,8 @@ export function AccessPortal() {
             <input autoComplete="new-password" type="password" value={passwordConfirm} onChange={(e) => setPasswordConfirm(e.target.value)} minLength={8} maxLength={128} style={{ width: '100%', boxSizing: 'border-box', height: 48, border: '1px solid #ded9dd', borderRadius: 13, padding: '0 14px', fontSize: 16 }} required />
             <label style={{ display: 'flex', gap: 8, marginTop: 15, color: '#675f65', fontSize: 12, lineHeight: 1.45 }}><input type="checkbox" checked={acceptedTerms} onChange={(e) => setAcceptedTerms(e.target.checked)} required />Li e aceito os <a href="/termos" target="_blank" rel="noreferrer" style={{ color: '#5f183e', fontWeight: 800 }}>termos de uso</a> e a <a href="/privacidade" target="_blank" rel="noreferrer" style={{ color: '#5f183e', fontWeight: 800 }}>política de privacidade</a>.</label>
             {error && <div style={{ marginTop: 14, padding: '11px 12px', borderRadius: 11, background: '#fff1f1', color: '#a82424', fontSize: 13, fontWeight: 700 }}>{error}</div>}
-            <button disabled={loading} type="submit" style={{ width: '100%', height: 52, border: 0, borderRadius: 14, marginTop: 20, background: '#5f183e', color: '#fff', fontSize: 15, fontWeight: 900, cursor: loading ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, opacity: loading ? .72 : 1 }}><UserPlus size={18}/>{loading ? 'Criando conta...' : 'Começar 7 dias grátis'}{!loading && <ArrowRight size={18}/>}</button>
-            <p style={{ textAlign: 'center', color: '#827b81', fontSize: 12, margin: '14px 0 0', lineHeight: 1.5 }}>Ao concluir, você entra no painel automaticamente. O plano gratuito de teste dura 7 dias.</p>
+            <button disabled={loading} type="submit" style={{ width: '100%', height: 52, border: 0, borderRadius: 14, marginTop: 20, background: '#5f183e', color: '#fff', fontSize: 15, fontWeight: 900, cursor: loading ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, opacity: loading ? .72 : 1 }}><UserPlus size={18}/>{loading ? 'Criando conta...' : 'Criar conta e escolher plano'}{!loading && <ArrowRight size={18}/>}</button>
+            <p style={{ textAlign: 'center', color: '#827b81', fontSize: 12, margin: '14px 0 0', lineHeight: 1.5 }}>Após o cadastro, você será direcionado para escolher e pagar seu plano. O painel será liberado após a confirmação.</p>
           </form> : mode === 'forgot' ? <form onSubmit={requestPasswordReset} style={{ background: '#fff', border: '1px solid #ece8eb', borderRadius: 24, padding: 26, boxShadow: '0 22px 55px rgba(42,26,37,.10)' }}>
             <label style={{ display: 'block', fontSize: 13, fontWeight: 800, marginBottom: 7 }}>E-mail ou login cadastrado</label>
             <input autoComplete="username" value={login} onChange={(e) => setLogin(e.target.value)} placeholder="seuemail@empresa.com" style={{ width: '100%', boxSizing: 'border-box', height: 50, border: '1px solid #ded9dd', borderRadius: 13, padding: '0 14px', fontSize: 16, outline: 'none' }} />
