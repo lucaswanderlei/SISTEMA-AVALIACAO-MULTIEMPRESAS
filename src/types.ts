@@ -105,6 +105,7 @@ export interface RestaurantSettings {
   waitTimePillarName?: string;
   evaluationTitle?: string;
   evaluationDescription?: string;
+  googleReviewUrl?: string; // Link opcional de avaliação no Google (recurso Premium)
   quickTagsOptions?: string[]; // Destaques rápidos personalizáveis por empresa
   totalTables: number;
   activeRewardMode: 'wheel' | 'fixed'; // Gira roleta ou ganha brinde fixo
