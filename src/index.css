@@ -1,6 +1,10 @@
 @import "tailwindcss";
 
 @media print {
+  @page {
+    margin: 0.6cm;
+  }
+
   header,
   nav,
   footer,
