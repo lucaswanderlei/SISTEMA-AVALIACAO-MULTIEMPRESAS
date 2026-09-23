@@ -985,7 +985,17 @@ export default function App() {
                     autoComplete="username"
                     value={loginInput}
                     inputMode="numeric"
-                    onChange={(e) => { setLoginInput(e.target.value.replace(/\D/g, '').slice(0, 14)); if (pinError) setPinError(''); }}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      // Esse campo normalmente só aceita números (CPF/CNPJ), mas
+                      // precisa continuar permitindo digitar "superadmin" (login
+                      // mestre do SuperAdmin) - só filtra letras quando o que foi
+                      // digitado não é mais um prefixo válido de "superadmin".
+                      const typedSoFar = raw.trim().toLowerCase();
+                      const isSuperAdminAttempt = typedSoFar.length > 0 && 'superadmin'.startsWith(typedSoFar);
+                      setLoginInput(isSuperAdminAttempt ? raw.slice(0, 14) : raw.replace(/\D/g, '').slice(0, 14));
+                      if (pinError) setPinError('');
+                    }}
                     placeholder="CPF ou CNPJ do proprietário"
                     className="w-full py-3 px-4 text-sm font-bold bg-stone-50 border-2 border-stone-300 rounded-2xl outline-none focus:border-rose-600 focus:bg-white"
                   />
