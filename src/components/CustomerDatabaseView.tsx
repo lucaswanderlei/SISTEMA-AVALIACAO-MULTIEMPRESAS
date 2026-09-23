@@ -69,8 +69,6 @@ export const CustomerDatabaseView: React.FC<CustomerDatabaseViewProps> = ({
   const [customerToDelete, setCustomerToDelete] = useState<CustomerGroup | null>(null);
   const [sendingApiId, setSendingApiId] = useState<string | null>(null);
   const [sentSuccessId, setSentSuccessId] = useState<string | null>(null);
-  const [triggeringExpiring, setTriggeringExpiring] = useState<boolean>(false);
-  const [expiringSuccessNotice, setExpiringSuccessNotice] = useState<string | null>(null);
   const [whatsappModalCustomer, setWhatsappModalCustomer] = useState<{
     customerName: string;
     phone: string;
@@ -390,27 +388,6 @@ export const CustomerDatabaseView: React.FC<CustomerDatabaseViewProps> = ({
   };
 
   // Trigger expiring notifications in batch
-  const handleTriggerExpiringBatch = async (type?: '5_days' | '1_day') => {
-    setTriggeringExpiring(true);
-    setExpiringSuccessNotice(null);
-    try {
-      const res = await apiTriggerExpiringNotifications({ type });
-      if (res.success) {
-        setExpiringSuccessNotice(res.message);
-        if (res.reviews && onUpdateReviews) {
-          onUpdateReviews(res.reviews);
-        }
-        setTimeout(() => setExpiringSuccessNotice(null), 6000);
-      } else {
-        alert(res.message || 'Não foi possível disparar as notificações');
-      }
-    } catch (err: any) {
-      alert('Erro ao disparar notificações: ' + (err?.message || 'erro'));
-    } finally {
-      setTriggeringExpiring(false);
-    }
-  };
-
   // Trigger notification for a single customer card
   const handleSingleCustomerNotify = async (
     cust: Review,
@@ -575,137 +552,6 @@ export const CustomerDatabaseView: React.FC<CustomerDatabaseViewProps> = ({
           </div>
         </div>
       </div>
-
-      {/* Success notice after triggering expiring reminders */}
-      {expiringSuccessNotice && (
-        <div className="bg-emerald-50 border-2 border-emerald-300 text-emerald-900 rounded-2xl p-4 flex items-center justify-between gap-3 text-xs font-bold animate-fadeIn">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-            <span>{expiringSuccessNotice}</span>
-          </div>
-          <button
-            onClick={() => setExpiringSuccessNotice(null)}
-            className="text-emerald-700 hover:text-emerald-900 text-sm font-black px-2 py-1"
-          >
-            ✕
-          </button>
-        </div>
-      )}
-
-      {/* Recommended Action Banner: Dual 1-day urgency and 5-day reminder broadcast */}
-      {(metrics.expiringIn1Day > 0 || metrics.expiringIn5Days > 0) && (
-        <div className="space-y-3">
-          {/* CRITICAL URGENCY: 1 DAY LEFT */}
-          {metrics.expiringIn1Day > 0 && (
-            <div className="bg-gradient-to-r from-rose-50 via-red-50 to-orange-50 border-2 border-rose-400 rounded-3xl p-5 shadow-sm flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
-              <div className="flex items-start gap-3.5">
-                <div className="w-12 h-12 rounded-2xl bg-rose-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-rose-200">
-                  <Flame className="w-6 h-6 animate-bounce" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="text-sm sm:text-base font-black text-rose-950">
-                      🚨 URGENTE: {metrics.expiringIn1Day} {metrics.expiringIn1Day === 1 ? 'cliente com brinde que EXPIRA AMANHÃ!' : 'clientes com brindes que EXPIRAM AMANHÃ!'}
-                    </h3>
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-rose-600 text-white uppercase tracking-wide">
-                      Último Dia (1 dia restante)
-                    </span>
-                  </div>
-                  <p className="text-xs text-rose-900/80 mt-1 max-w-2xl leading-relaxed">
-                    A validade de {settings.rewardValidityDays ?? 15} dias para estes clientes se esgota amanhã. O sistema já programa o envio automático via WhatsApp, mas você pode disparar ou filtrar agora para garantir a visita deles hoje à noite ou amanhã!
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 shrink-0 w-full lg:w-auto">
-                <button
-                  type="button"
-                  onClick={() => setStatusFilter(statusFilter === 'expiring_1d' ? 'all' : 'expiring_1d')}
-                  className={`flex-1 lg:flex-none px-4 py-2.5 rounded-xl text-xs font-black transition flex items-center justify-center gap-2 shadow-sm cursor-pointer ${
-                    statusFilter === 'expiring_1d'
-                      ? 'bg-rose-700 text-white ring-2 ring-rose-400'
-                      : 'bg-rose-100 hover:bg-rose-200 text-rose-900 border border-rose-300'
-                  }`}
-                >
-                  <Filter className="w-4 h-4" />
-                  <span>
-                    {statusFilter === 'expiring_1d'
-                      ? 'Mostrando todos'
-                      : `Ver ${metrics.expiringIn1Day} de 1 dia`}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={triggeringExpiring}
-                  onClick={() => handleTriggerExpiringBatch('1_day')}
-                  className="flex-1 lg:flex-none px-4 py-2.5 rounded-xl text-xs font-black transition flex items-center justify-center gap-2 shadow-md bg-rose-600 hover:bg-rose-700 active:scale-95 text-white cursor-pointer disabled:opacity-60"
-                >
-                  <Send className="w-4 h-4" />
-                  <span>
-                    {triggeringExpiring ? 'Disparando...' : '📢 Disparar Alertas de 1 Dia'}
-                  </span>
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* POLITE REMINDER: 5 DAYS LEFT */}
-          {metrics.expiringIn5Days > 0 && (
-            <div className="bg-gradient-to-r from-amber-50 via-orange-50/60 to-amber-100/50 border-2 border-amber-300 rounded-3xl p-5 shadow-xs flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
-              <div className="flex items-start gap-3.5">
-                <div className="w-12 h-12 rounded-2xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-md shadow-amber-200">
-                  <BellRing className="w-6 h-6 animate-pulse" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="text-sm sm:text-base font-black text-stone-900">
-                      ⏳ LEMBRETE PREVENTIVO: {metrics.expiringIn5Days} {metrics.expiringIn5Days === 1 ? 'cliente com brinde a expirar em 5 dias' : 'clientes com brindes a expirar em 5 dias'}
-                    </h3>
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-200 text-amber-900 uppercase tracking-wide">
-                      Faltam 5 dias
-                    </span>
-                  </div>
-                  <p className="text-xs text-stone-600 mt-1 max-w-2xl leading-relaxed">
-                    Estes clientes ganharam cortesias com validade de {settings.rewardValidityDays ?? 15} dias e ainda têm 5 dias para usar. O envio amigável pelo WhatsApp reativa o cliente para planejar a ida ao restaurante esta semana.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 shrink-0 w-full lg:w-auto">
-                <button
-                  type="button"
-                  onClick={() => setStatusFilter(statusFilter === 'expiring_5d' ? 'all' : 'expiring_5d')}
-                  className={`flex-1 lg:flex-none px-4 py-2.5 rounded-xl text-xs font-black transition flex items-center justify-center gap-2 shadow-sm cursor-pointer ${
-                    statusFilter === 'expiring_5d'
-                      ? 'bg-amber-700 text-white ring-2 ring-amber-400'
-                      : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'
-                  }`}
-                >
-                  <Filter className="w-4 h-4" />
-                  <span>
-                    {statusFilter === 'expiring_5d'
-                      ? 'Mostrando todos'
-                      : `Ver ${metrics.expiringIn5Days} de 5 dias`}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={triggeringExpiring}
-                  onClick={() => handleTriggerExpiringBatch('5_days')}
-                  className="flex-1 lg:flex-none px-4 py-2.5 rounded-xl text-xs font-black transition flex items-center justify-center gap-2 shadow-md bg-stone-900 hover:bg-stone-800 active:scale-95 text-white cursor-pointer disabled:opacity-60"
-                >
-                  <Send className="w-4 h-4 text-amber-400" />
-                  <span>
-                    {triggeringExpiring ? 'Disparando...' : '📢 Disparar Lembretes de 5 Dias'}
-                  </span>
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Control Bar: Search, Filters & CSV Export */}
       <div className="bg-white rounded-2xl p-4 border border-stone-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
