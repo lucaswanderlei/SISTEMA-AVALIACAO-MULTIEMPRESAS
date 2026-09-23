@@ -17,6 +17,7 @@ export interface Waiter {
   photoUrl?: string;
   active: boolean;
   createdAt: string;
+  senhaAcesso?: string; // campo transitório: só usado ao salvar, nunca fica salvo no registro do garçom
 }
 
 export interface PublicReviewInput {
