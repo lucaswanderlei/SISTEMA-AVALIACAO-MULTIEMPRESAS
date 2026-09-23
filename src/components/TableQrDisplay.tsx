@@ -40,7 +40,7 @@ export const TableQrDisplay: React.FC<TableQrDisplayProps> = ({
 }) => {
   // Mode: 'universal' (one QR code for all tables) vs 'individual' (per-table QR codes)
   const [qrMode, setQrMode] = useState<'universal' | 'individual'>('universal');
-  const [universalPrintFormat, setUniversalPrintFormat] = useState<'display_10x8' | 'grid_10x8' | 'stand_10x15'>('display_10x8');
+  const [universalPrintFormat, setUniversalPrintFormat] = useState<'display_10x8' | 'grid_10x8' | 'stand_10x15' | 'grid3_10x15'>('display_10x8');
   const [individualPrintFormat, setIndividualPrintFormat] = useState<'single' | 'all'>('single');
 
   const [selectedMesa, setSelectedMesa] = useState<number>(currentTable > 0 ? currentTable : 1);
@@ -246,7 +246,20 @@ export const TableQrDisplay: React.FC<TableQrDisplayProps> = ({
                 }`}
               >
                 <Layers className="w-3.5 h-3.5" />
-                <span>Totem 10x15 cm</span>
+                <span>Totem 9,97x14 cm</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setUniversalPrintFormat('grid3_10x15')}
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                  universalPrintFormat === 'grid3_10x15'
+                    ? 'bg-amber-600 text-white shadow-sm'
+                    : 'bg-white hover:bg-amber-100 text-amber-900 border border-amber-300'
+                }`}
+              >
+                <Scissors className="w-3.5 h-3.5" />
+                <span>Folha A4 (3 Totens)</span>
               </button>
             </div>
           </div>
@@ -449,7 +462,9 @@ export const TableQrDisplay: React.FC<TableQrDisplayProps> = ({
                     ? 'Prévia: Plaquinha de Mesa 10x8 cm'
                     : universalPrintFormat === 'grid_10x8'
                     ? 'Prévia: Folha A4 com 4 Plaquinhas 10x8 cm'
-                    : 'Prévia: Totem Vertical 10x15 cm'}
+                    : universalPrintFormat === 'grid3_10x15'
+                    ? 'Prévia: Folha A4 com 3 Totens 9,97x14 cm'
+                    : 'Prévia: Totem Vertical 9,97x14 cm'}
                 </span>
                 <button
                   type="button"
@@ -490,10 +505,26 @@ export const TableQrDisplay: React.FC<TableQrDisplayProps> = ({
                 </div>
               )}
 
-              {/* FORMAT 3: Stand 10x15 cm */}
+              {/* FORMAT 3: Stand 9,97x14 cm */}
               {universalPrintFormat === 'stand_10x15' && (
                 <div className="printable-area w-full flex justify-center">
                   <AcrylicStandCard settings={settings} qrCodeUrl={qrCodeUrl} template={displayTemplate} />
+                </div>
+              )}
+
+              {/* FORMAT 4: 3 Totens 9,97x14 cm on one A4 sheet (landscape) */}
+              {universalPrintFormat === 'grid3_10x15' && (
+                <div className="printable-area w-full bg-white p-4 sm:p-6 rounded-3xl border border-stone-200 shadow-lg">
+                  <div className="no-print text-center text-xs text-stone-500 mb-4 pb-3 border-b border-stone-100 flex items-center justify-center gap-2">
+                    <Scissors className="w-4 h-4 text-stone-400" />
+                    <span>3 totens 9,97x14 cm lado a lado — na hora de imprimir, selecione orientação Paisagem/Landscape no diálogo de impressão</span>
+                  </div>
+
+                  <div className="flex flex-wrap print:flex-nowrap justify-center gap-4 print:gap-2">
+                    <AcrylicStandCard settings={settings} qrCodeUrl={qrCodeUrl} template={displayTemplate} compact />
+                    <AcrylicStandCard settings={settings} qrCodeUrl={qrCodeUrl} template={displayTemplate} compact />
+                    <AcrylicStandCard settings={settings} qrCodeUrl={qrCodeUrl} template={displayTemplate} compact />
+                  </div>
                 </div>
               )}
             </div>
@@ -787,7 +818,7 @@ export const TableDisplayCard10x8: React.FC<TableDisplayCard10x8Props> = ({
 };
 
 // =========================================================================
-// ACRYLIC STAND CARD (DISPLAY REALISTA 10x15 CM)
+// ACRYLIC STAND CARD (DISPLAY REALISTA 9,97x14 CM)
 // =========================================================================
 interface AcrylicStandCardProps {
   settings: RestaurantSettings;
@@ -814,9 +845,10 @@ const AcrylicStandCard: React.FC<AcrylicStandCardProps> = ({
   }[template];
   return (
     <div
-      className={`relative w-full ${
-        compact ? 'max-w-xs p-4 rounded-2xl' : 'max-w-sm p-6 sm:p-7 rounded-3xl'
-      } ${theme} shadow-2xl border-4 text-center overflow-hidden`}
+      className={`relative ${
+        compact ? 'p-4 rounded-2xl' : 'p-6 sm:p-7 rounded-3xl'
+      } ${theme} shadow-2xl border-4 text-center overflow-hidden print:break-inside-avoid`}
+      style={{ width: '9.97cm', height: '14cm' }}
     >
       {/* Glossy Acrylic Reflections */}
       <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-transparent via-white/50 to-transparent" />
