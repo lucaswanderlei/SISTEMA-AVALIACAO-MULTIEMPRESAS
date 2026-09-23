@@ -2867,14 +2867,23 @@ if (totalEmpresas === 0) {
       }
       for (const waiter of waiters) {
         if (!isValidCpf(waiter.cpf)) return res.status(400).json({ error: `Informe um CPF válido para ${String(waiter.name).trim()}.` });
+        if (waiter.senhaAcesso !== undefined && waiter.senhaAcesso !== null && String(waiter.senhaAcesso).trim() && String(waiter.senhaAcesso).trim().length < 6) {
+          return res.status(400).json({ error: `A senha de acesso de ${String(waiter.name).trim()} deve ter pelo menos 6 caracteres.` });
+        }
       }
+      // A senha nunca é persistida em texto puro no jsonb de dados da empresa —
+      // só trafega nesta requisição, vira hash na tabela de usuários abaixo.
+      const sanitizedWaitersForStorage = req.body.map((waiter: any) => {
+        const { senhaAcesso, ...rest } = waiter || {};
+        return rest;
+      });
       const result = await pool.query(
         `UPDATE avaliacao_empresas
          SET dados=jsonb_set(COALESCE(dados,'{}'::jsonb), '{waiters}', $2::jsonb, true),
              atualizado_em=NOW()
          WHERE empresa_id=$1 AND ativo=TRUE
          RETURNING dados`,
-        [companyId, JSON.stringify(req.body)]
+        [companyId, JSON.stringify(sanitizedWaitersForStorage)]
       );
       if (!result.rows[0]?.dados) return res.status(404).json({ error: 'Empresa não encontrada.' });
       const credentials: Array<{ name: string; login: string; temporaryPassword: string }> = [];
@@ -2884,22 +2893,28 @@ if (totalEmpresas === 0) {
       for (const waiter of waiters) {
         const userId = `redeemer:${companyId}:${waiter.id}`;
         const login = digitsOnly(waiter.cpf);
+        const senhaEscolhida = waiter.senhaAcesso && String(waiter.senhaAcesso).trim().length >= 6 ? String(waiter.senhaAcesso).trim() : null;
         const existing = await pool.query('SELECT id, login FROM avaliacao_usuarios WHERE id=$1 AND empresa_id=$2 LIMIT 1', [userId, companyId]);
         if (existing.rows[0]) {
           const duplicate = await pool.query('SELECT id FROM avaliacao_usuarios WHERE empresa_id=$1 AND LOWER(login)=LOWER($2) AND id<>$3 LIMIT 1', [companyId, login, userId]);
           if (duplicate.rows[0]) return res.status(409).json({ error: 'Este CPF já possui um acesso nesta empresa.' });
-          await pool.query(`UPDATE avaliacao_usuarios SET nome=$3, login=$4, perfil='redeemer', ativo=$5, atualizado_em=NOW() WHERE id=$1 AND empresa_id=$2`, [userId, companyId, String(waiter.name).trim(), login, Boolean(waiter.active)]);
+          if (senhaEscolhida) {
+            await pool.query(`UPDATE avaliacao_usuarios SET nome=$3, login=$4, perfil='redeemer', ativo=$5, senha_hash=$6, atualizado_em=NOW() WHERE id=$1 AND empresa_id=$2`, [userId, companyId, String(waiter.name).trim(), login, Boolean(waiter.active), hashPassword(senhaEscolhida)]);
+            credentials.push({ name: String(waiter.name).trim(), login, temporaryPassword: senhaEscolhida });
+          } else {
+            await pool.query(`UPDATE avaliacao_usuarios SET nome=$3, login=$4, perfil='redeemer', ativo=$5, atualizado_em=NOW() WHERE id=$1 AND empresa_id=$2`, [userId, companyId, String(waiter.name).trim(), login, Boolean(waiter.active)]);
+          }
           continue;
         }
         const duplicate = await pool.query('SELECT id FROM avaliacao_usuarios WHERE empresa_id=$1 AND LOWER(login)=LOWER($2) LIMIT 1', [companyId, login]);
         if (duplicate.rows[0]) return res.status(409).json({ error: 'Este CPF já possui um acesso nesta empresa.' });
-        const temporaryPassword = `Brinde@${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+        const temporaryPassword = senhaEscolhida || `Brinde@${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
         await pool.query(`INSERT INTO avaliacao_usuarios (id, empresa_id, nome, login, senha_hash, perfil, ativo)
           VALUES ($1,$2,$3,$4,$5,'redeemer',$6)`, [userId, companyId, String(waiter.name).trim(), login, hashPassword(temporaryPassword), Boolean(waiter.active)]);
         credentials.push({ name: String(waiter.name).trim(), login, temporaryPassword });
       }
       const current = tenantDbs.get(companyId)!;
-      current.waiters = req.body;
+      current.waiters = sanitizedWaitersForStorage;
       return res.json({ success: true, waiters: current.waiters, credentials });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Erro ao salvar garçons.' });
