@@ -30,6 +30,7 @@ import {
   ThumbsUp,
   ChevronDown,
   HelpCircle,
+  Copy,
   X,
   Phone,
   Database,
@@ -713,12 +714,15 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
   const [waiterNickname, setWaiterNickname] = useState('');
   const [waiterBadgeNumber, setWaiterBadgeNumber] = useState('');
   const [waiterCpf, setWaiterCpf] = useState('');
+  const [waiterPassword, setWaiterPassword] = useState('');
+  const [showWaiterPassword, setShowWaiterPassword] = useState(false);
   const [waiterRole, setWaiterRole] = useState<'Garçom' | 'Garçonete' | 'Atendente' | 'Cumim'>('Garçom');
   const [waiterActive, setWaiterActive] = useState(true);
   const [isSavingWaiter, setIsSavingWaiter] = useState(false);
 
   // Validator state
   const [inputCode, setInputCode] = useState('');
+  const [validatorLinkCopied, setValidatorLinkCopied] = useState(false);
   const [validationResult, setValidationResult] = useState<{
     success: boolean;
     message: string;
@@ -1063,6 +1067,8 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
     setWaiterNickname('');
     setWaiterBadgeNumber('');
     setWaiterCpf('');
+    setWaiterPassword('');
+    setShowWaiterPassword(false);
     setWaiterRole('Garçom');
     setWaiterActive(true);
     setIsWaiterModalOpen(true);
@@ -1074,6 +1080,8 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
     setWaiterNickname(waiter.nickname || '');
     setWaiterBadgeNumber(waiter.badgeNumber || '');
     setWaiterCpf(waiter.cpf || '');
+    setWaiterPassword('');
+    setShowWaiterPassword(false);
     setWaiterRole(waiter.role);
     setWaiterActive(waiter.active);
     setIsWaiterModalOpen(true);
@@ -1084,6 +1092,10 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
     if (isSavingWaiter) return;
     if (!waiterName.trim() || waiterCpf.replace(/\D/g, '').length !== 11) {
       window.alert('Informe o CPF do funcionário com 11 números. Ele será usado como login.');
+      return;
+    }
+    if (waiterPassword.trim() && waiterPassword.trim().length < 6) {
+      window.alert('A senha de acesso deve ter pelo menos 6 caracteres. Deixe em branco para gerar uma automaticamente.');
       return;
     }
 
@@ -1101,6 +1113,7 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
                 cpf: waiterCpf.replace(/\D/g, ''),
                 role: waiterRole,
                 active: waiterActive,
+                ...(waiterPassword.trim() ? { senhaAcesso: waiterPassword.trim() } : {}),
               }
             : w
         );
@@ -1115,15 +1128,17 @@ ${detailed ? `<h2>Avaliações detalhadas</h2><table><thead><tr><th>Data</th><th
           role: waiterRole,
           active: waiterActive,
           createdAt: new Date().toISOString(),
+          ...(waiterPassword.trim() ? { senhaAcesso: waiterPassword.trim() } : {}),
         };
         saved = await onUpdateWaiters([...waiters, newW]);
       }
 
       if (!saved.success) return;
       if (saved.success && saved.credentials.length) {
-        const access = saved.credentials.map(item => `${item.name}\nCPF (login): ${item.login}\nSenha temporária: ${item.temporaryPassword}`).join('\n\n');
-        window.alert(`Acesso de validação criado. Anote e entregue estas credenciais ao funcionário:\n\n${access}`);
+        const access = saved.credentials.map(item => `${item.name}\nCPF (login): ${item.login}\nSenha de acesso: ${item.temporaryPassword}`).join('\n\n');
+        window.alert(`Acesso de validação criado/atualizado. Anote e entregue estas credenciais ao funcionário:\n\n${access}`);
       }
+      setWaiterPassword('');
       setIsWaiterModalOpen(false);
     } catch {
       window.alert('Não foi possível salvar o funcionário no banco. Tente novamente.');
@@ -2336,6 +2351,35 @@ return (
                     <p className="mt-1 text-[11px] text-stone-400">Será o login dele no link de validação desta empresa.</p>
                   </div>
 
+                  <div>
+                    <label className="block text-xs font-bold text-stone-700 mb-1">
+                      {editingWaiterId ? 'Nova senha de acesso' : 'Senha de acesso'}
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showWaiterPassword ? 'text' : 'password'}
+                        value={waiterPassword}
+                        onChange={(e) => setWaiterPassword(e.target.value)}
+                        placeholder={editingWaiterId ? 'Deixe em branco para manter a atual' : 'Mín. 6 caracteres (ou deixe em branco)'}
+                        minLength={6}
+                        className="w-full text-xs p-3 pr-10 rounded-xl border border-stone-200 focus:border-rose-500 outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowWaiterPassword((v) => !v)}
+                        tabIndex={-1}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600"
+                      >
+                        {showWaiterPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    <p className="mt-1 text-[11px] text-stone-400">
+                      {editingWaiterId
+                        ? 'Só preencha se quiser trocar a senha atual dele.'
+                        : 'Se deixar em branco, o sistema gera uma senha automática pra você anotar e entregar ao funcionário.'}
+                    </p>
+                  </div>
+
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-bold text-stone-700 mb-1">
@@ -2428,6 +2472,43 @@ return (
             <p className="text-xs text-stone-500 mb-6">
               Quando o cliente apresentar o cupom na mesa ou no caixa, digite o código de 4 dígitos ou código completo para validar a entrega da cortesia.
             </p>
+
+            <div className="mb-6 text-left">
+              <label className="block text-[11px] font-bold text-stone-600 mb-1.5">
+                Link direto desta tela (favorite no celular de quem vai validar)
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={`https://app.avaliaeganha.com.br/validar-brinde?empresa=${getCompanyId()}`}
+                  onFocus={(e) => e.currentTarget.select()}
+                  className="flex-1 min-w-0 text-[11px] font-mono p-2.5 rounded-xl border border-stone-200 bg-stone-50 text-stone-600 outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard
+                      .writeText(`https://app.avaliaeganha.com.br/validar-brinde?empresa=${getCompanyId()}`)
+                      .then(() => {
+                        setValidatorLinkCopied(true);
+                        setTimeout(() => setValidatorLinkCopied(false), 2500);
+                      });
+                  }}
+                  className={`shrink-0 flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                    validatorLinkCopied
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-stone-800 hover:bg-stone-900 text-white'
+                  }`}
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  {validatorLinkCopied ? 'Copiado!' : 'Copiar'}
+                </button>
+              </div>
+              <p className="mt-1.5 text-[11px] text-stone-400">
+                Abre direto nesta tela, sem passar pelo resto do painel — ideal pra deixar salvo no celular do garçom/caixa.
+              </p>
+            </div>
 
             <form onSubmit={handleValidateSubmit} className="space-y-4">
               <div>
