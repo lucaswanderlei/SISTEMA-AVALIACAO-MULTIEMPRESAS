@@ -19,14 +19,13 @@ import {
   Flame,
   Send,
   Copy,
-  Sparkles,
   AlertTriangle,
   BellRing,
   Trash2,
   X,
 } from 'lucide-react';
 import { Review, RestaurantSettings } from '../types';
-import { apiTriggerExpiringNotifications, tenantFetch } from '../lib/api';
+import { tenantFetch } from '../lib/api';
 
 interface CustomerDatabaseViewProps {
   reviews: Review[];
@@ -67,8 +66,6 @@ export const CustomerDatabaseView: React.FC<CustomerDatabaseViewProps> = ({
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [showClearConfirmModal, setShowClearConfirmModal] = useState(false);
   const [customerToDelete, setCustomerToDelete] = useState<CustomerGroup | null>(null);
-  const [sendingApiId, setSendingApiId] = useState<string | null>(null);
-  const [sentSuccessId, setSentSuccessId] = useState<string | null>(null);
   const [whatsappModalCustomer, setWhatsappModalCustomer] = useState<{
     customerName: string;
     phone: string;
@@ -385,32 +382,6 @@ export const CustomerDatabaseView: React.FC<CustomerDatabaseViewProps> = ({
     navigator.clipboard?.writeText(code);
     setCopiedCode(code);
     setTimeout(() => setCopiedCode(null), 2000);
-  };
-
-  // Trigger expiring notifications in batch
-  // Trigger notification for a single customer card
-  const handleSingleCustomerNotify = async (
-    cust: Review,
-    type: '5_days' | '1_day'
-  ) => {
-    setSendingApiId(cust.id);
-    try {
-      const res = await apiTriggerExpiringNotifications({
-        reviewId: cust.id,
-        type,
-      });
-      if (res.success) {
-        setSentSuccessId(cust.id);
-        if (res.reviews && onUpdateReviews) {
-          onUpdateReviews(res.reviews);
-        }
-        setTimeout(() => setSentSuccessId(null), 3500);
-      }
-    } catch (err) {
-      console.warn('Notification trigger error', err);
-    } finally {
-      setSendingApiId(null);
-    }
   };
 
   // Generate WhatsApp message link with start date, expiration date, and 1 per table rule
@@ -924,33 +895,6 @@ export const CustomerDatabaseView: React.FC<CustomerDatabaseViewProps> = ({
                                 </span>
                                 <ExternalLink className="w-3 h-3 opacity-80" />
                               </a>
-
-                              {/* Trigger single notification via server API */}
-                              <button
-                                type="button"
-                                disabled={sendingApiId === cust.id}
-                                onClick={() =>
-                                  handleSingleCustomerNotify(
-                                    cust,
-                                    expInfo.isOneDayLeft ? '1_day' : '5_days'
-                                  )
-                                }
-                                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
-                                  sentSuccessId === cust.id
-                                    ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
-                                    : 'bg-stone-50 hover:bg-stone-100 text-stone-700 border-stone-200'
-                                }`}
-                                title="Disparar notificação automaticamente via servidor"
-                              >
-                                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                                <span>
-                                  {sendingApiId === cust.id
-                                    ? 'Enviando...'
-                                    : sentSuccessId === cust.id
-                                    ? '✅ Enviado!'
-                                    : 'Disparar no Servidor'}
-                                </span>
-                              </button>
 
                               {/* Preview message modal button */}
                               <button
