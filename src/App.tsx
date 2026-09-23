@@ -986,14 +986,10 @@ export default function App() {
                     value={loginInput}
                     inputMode="numeric"
                     onChange={(e) => {
-                      const raw = e.target.value;
-                      // Esse campo normalmente só aceita números (CPF/CNPJ), mas
-                      // precisa continuar permitindo digitar "superadmin" (login
-                      // mestre do SuperAdmin) - só filtra letras quando o que foi
-                      // digitado não é mais um prefixo válido de "superadmin".
-                      const typedSoFar = raw.trim().toLowerCase();
-                      const isSuperAdminAttempt = typedSoFar.length > 0 && 'superadmin'.startsWith(typedSoFar);
-                      setLoginInput(isSuperAdminAttempt ? raw.slice(0, 14) : raw.replace(/\D/g, '').slice(0, 14));
+                      // Mantém letras e números (cobre tanto CPF/CNPJ quanto
+                      // qualquer login mestre customizado do SuperAdmin) - só
+                      // remove pontuação de formatação (pontos, traço, espaço).
+                      setLoginInput(e.target.value.replace(/[^a-zA-Z0-9]/g, '').slice(0, 32));
                       if (pinError) setPinError('');
                     }}
                     placeholder="CPF ou CNPJ do proprietário"
